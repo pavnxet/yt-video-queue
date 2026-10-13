@@ -16,6 +16,7 @@ const state = {
   videos: [],
   currentVideoId: null,
   autoplay: true,
+  view: 'compact',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -112,6 +113,32 @@ function initTheme() {
   else if (mq.addListener) mq.addListener(onChange);
 }
 
+// --------------------------------------------------------------------- view
+// Windows-Explorer-style view modes for the video lists: thumbnail grid,
+// compact rows with thumbnails, or a plain text list.
+const VIEW_KEY = 'ytq_view';
+const VIEW_MODES = ['grid', 'compact', 'list'];
+
+function applyView() {
+  document.documentElement.dataset.view = state.view;
+  document.querySelectorAll('.view-btn').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.view === state.view));
+  });
+}
+
+function initView() {
+  const stored = localStorage.getItem(VIEW_KEY);
+  if (VIEW_MODES.includes(stored)) state.view = stored;
+  applyView();
+}
+
+function setView(view) {
+  if (!VIEW_MODES.includes(view)) return;
+  state.view = view;
+  localStorage.setItem(VIEW_KEY, view);
+  applyView();
+}
+
 // -------------------------------------------------------------------- modal
 let modalSave = null;
 
@@ -140,6 +167,7 @@ async function submitModal() {
 // ------------------------------------------------------------------- routing
 async function init() {
   initTheme();
+  initView();
   wireEvents();
 
   if (!API_BASE_URL || API_BASE_URL.includes('REPLACE_WITH')) {
@@ -259,13 +287,25 @@ function renderSeries() {
 function videoRow(v, index) {
   const li = el('li', 'video-item status-' + v.status);
 
-  if (index != null) li.appendChild(el('span', 'idx', String(index)));
+  // YouTube serves these thumbnails straight off i.ytimg.com — no API key.
+  const thumb = document.createElement('img');
+  thumb.className = 'thumb';
+  thumb.loading = 'lazy';
+  thumb.decoding = 'async';
+  thumb.alt = '';
+  thumb.src = `https://i.ytimg.com/vi/${v.youtubeId}/mqdefault.jpg`;
+  thumb.onerror = () => thumb.classList.add('is-missing');
+  li.appendChild(thumb);
+
+  const main = el('div', 'vmain');
+  if (index != null) main.appendChild(el('span', 'idx', String(index)));
 
   const title = el('span', 'vtitle', v.title || v.youtubeId);
   title.title = v.title ? `${v.title} · ${v.youtubeId}` : v.youtubeId;
-  li.appendChild(title);
+  main.appendChild(title);
 
-  if (v.status === 'watching') li.appendChild(el('span', 'badge', 'watching'));
+  if (v.status === 'watching') main.appendChild(el('span', 'badge', 'watching'));
+  li.appendChild(main);
 
   const actions = el('div', 'row-actions');
   actions.appendChild(iconBtn('▶', 'Play', () => openPlayer(v.id)));
@@ -535,6 +575,11 @@ function wireEvents() {
   // theme
   const themeBtn = $('#theme-toggle');
   if (themeBtn) themeBtn.onclick = toggleTheme;
+
+  // view mode switcher
+  document.querySelectorAll('.view-btn').forEach((b) => {
+    b.onclick = () => setView(b.dataset.view);
+  });
 
   // modal
   $('#modal-save').onclick = () => submitModal();
