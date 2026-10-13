@@ -141,13 +141,14 @@
       <label class="field">New title pattern
         <input id="bulk-pattern" type="text" autocomplete="off" placeholder="e.g. Part {n} — {title}">
       </label>
-      <p class="hint">Placeholders: <code>{n}</code> number &middot; <code>{title}</code> current title &middot; <code>{id}</code> YouTube id &middot; <code>{total}</code> how many are selected</p>
+      <p class="hint">Number: <code>{n}</code>, or <code>{1}</code> to start at 1, or <code>{n:2}</code> for 01, 02 &middot; also <code>{title}</code> current title &middot; <code>{id}</code> YouTube id &middot; <code>{total}</code> how many are selected</p>
       <label class="field">Start number (used by <code>{n}</code>)
         <input id="bulk-start" type="number" min="0" value="1">
       </label>
       <div class="preview">
         <div class="hint">Preview</div>
         <ol id="bulk-preview"></ol>
+        <p id="bulk-warn" class="warn" hidden></p>
       </div>
       <div class="modal-actions">
         <button id="bulk-cancel" class="ghost" type="button">Cancel</button>

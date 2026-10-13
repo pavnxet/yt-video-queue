@@ -444,6 +444,17 @@ function bulkItems() {
   return state.videos.filter((v) => state.selected.has(v.id));
 }
 
+function padNum(n, width) {
+  let s = String(n);
+  while (s.length < width) s = '0' + s;
+  return s;
+}
+
+// Recognised number tokens: {n} {i} {index} {num} {no}, or a literal start
+// number like {1} / {5}. Add ":2" to zero-pad, e.g. {n:2} -> 01, 02.
+const BULK_TOKEN_RE = /\{(?:n|i|index|num|no|total|title|id)(?::\d+)?\}/i;
+const BULK_NUM_RE = /\{\d+(?::\d+)?\}/;
+
 function bulkComputeTitle(v, index, total) {
   const find = $('#bulk-find').value;
   const repl = $('#bulk-replace').value;
@@ -452,15 +463,20 @@ function bulkComputeTitle(v, index, total) {
 
   let base = v.title || v.youtubeId;
   if (find) base = base.split(find).join(repl);
+  if (!pattern) return base;
 
-  if (pattern) {
-    return pattern
-      .replace(/\{n\}/g, String(start + index))
-      .replace(/\{total\}/g, String(total))
-      .replace(/\{title\}/g, base)
-      .replace(/\{id\}/g, v.youtubeId);
-  }
-  return base;
+  return pattern
+    // {n:2} / {i:3} -> zero-padded sequence from the Start number
+    .replace(/\{(n|i|index|num|no)\s*:\s*(\d+)\}/gi, (_, _t, w) => padNum(start + index, +w))
+    // {1:2} / {5:3} -> zero-padded sequence from that literal number
+    .replace(/\{(\d+)\s*:\s*(\d+)\}/g, (_, b, w) => padNum(parseInt(b, 10) + index, +w))
+    // {n} / {i} -> the Start number field, counting up
+    .replace(/\{(?:n|i|index|num|no)\}/gi, () => String(start + index))
+    // {1} / {5} -> that number, counting up
+    .replace(/\{(\d+)\}/g, (_, b) => String(parseInt(b, 10) + index))
+    .replace(/\{total\}/gi, () => String(total))
+    .replace(/\{title\}/gi, () => base)
+    .replace(/\{id\}/gi, () => v.youtubeId);
 }
 
 function renderBulkPreview() {
@@ -471,6 +487,15 @@ function renderBulkPreview() {
     ol.appendChild(el('li', null, bulkComputeTitle(v, i, items.length)));
   });
   if (items.length > 3) ol.appendChild(el('li', 'muted', `…and ${items.length - 3} more`));
+
+  // Warn if the pattern has no placeholder at all — every title would be identical.
+  const pattern = $('#bulk-pattern').value;
+  const hasToken = BULK_TOKEN_RE.test(pattern) || BULK_NUM_RE.test(pattern);
+  const warn = $('#bulk-warn');
+  warn.hidden = !(pattern && !hasToken);
+  warn.textContent = warn.hidden
+    ? ''
+    : 'This pattern has no placeholder, so every selected video would get the same title. Use {n}, or {1} to number them.';
 }
 
 function openBulkRename() {

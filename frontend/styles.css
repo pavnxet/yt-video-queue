@@ -402,6 +402,7 @@ textarea { resize: vertical; min-height: 84px; }
   border-radius: 4px;
   padding: 1px 4px;
 }
+.warn { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
 .preview { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; }
 .preview ol { margin: 6px 0 0; padding-left: 20px; font-size: 13px; color: var(--ink-2); }
 .preview li { overflow-wrap: anywhere; }
