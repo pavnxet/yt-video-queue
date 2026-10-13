@@ -314,16 +314,28 @@ textarea { resize: vertical; min-height: 84px; }
   aspect-ratio: 16 / 9;
   border-radius: 0;
 }
-[data-view="grid"] .video-item .vmain { padding: 12px 14px 0; }
+[data-view="grid"] .video-item .vmain {
+  align-items: flex-start;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 14px 0;
+}
 [data-view="grid"] .video-item .idx { display: none; }
 [data-view="grid"] .video-item .vtitle {
   white-space: normal;
-  overflow: visible;
+  /* -webkit-line-clamp only clips the extra lines when overflow is hidden */
+  overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  line-height: 1.35;
 }
-[data-view="grid"] .video-item .row-actions { padding: 10px 14px 14px; }
+[data-view="grid"] .video-item .row-actions {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 14px;
+}
 
 /* the view switcher itself */
 .view-switch {
