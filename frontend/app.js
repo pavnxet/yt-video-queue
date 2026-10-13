@@ -4,7 +4,7 @@ import { API_BASE_URL } from './config.js';
 import { QueuePlayer } from './player.js';
 import { startRegistration, startAuthentication } from 'https://esm.sh/@simplewebauthn/browser@13';
 
-const VERSION = '1.1';
+const VERSION = '1.2';
 const TOKEN_KEY = 'ytq_token';
 const VIEWS = ['login-view', 'dashboard-view', 'series-view', 'player-view'];
 
@@ -21,6 +21,7 @@ const state = {
   view: 'compact',
   selectMode: false,
   selected: new Set(),
+  bulkExcluded: new Set(),
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -512,94 +513,352 @@ function setSelectMode(on) {
   renderSeries();
 }
 
-// ---- bulk rename ----------------------------------------------------------
+// ---- bulk rename, PowerRename-style ---------------------------------------
 function padNum(n, width) {
-  let s = String(n);
+  const neg = n < 0;
+  let s = String(Math.abs(n));
   while (s.length < width) s = '0' + s;
+  return (neg ? '-' : '') + s;
+}
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTHS_SHORT = MONTHS.map((m) => m.slice(0, 3));
+const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const WEEKDAYS_SHORT = WEEKDAYS.map((d) => d.slice(0, 3));
+
+// Longest token first, so $MMMM is not eaten by $MM.
+const DATE_TOKENS = ['YYYY','YY','Y','MMMM','MMM','MM','M','DDDD','DDD','DD','D','HH','hh','TT','tt','H','h','mm','m','ss','s','fff','ff','f'];
+
+function dateValues(d) {
+  const h12 = d.getHours() % 12 === 0 ? 12 : d.getHours() % 12;
+  return {
+    YYYY: padNum(d.getFullYear(), 4), YY: padNum(d.getFullYear() % 100, 2), Y: String(d.getFullYear() % 10),
+    MMMM: MONTHS[d.getMonth()], MMM: MONTHS_SHORT[d.getMonth()],
+    MM: padNum(d.getMonth() + 1, 2), M: String(d.getMonth() + 1),
+    DDDD: WEEKDAYS[d.getDay()], DDD: WEEKDAYS_SHORT[d.getDay()],
+    DD: padNum(d.getDate(), 2), D: String(d.getDate()),
+    HH: padNum(h12, 2), H: String(h12), hh: padNum(d.getHours(), 2), h: String(d.getHours()),
+    TT: d.getHours() < 12 ? 'AM' : 'PM', tt: d.getHours() < 12 ? 'am' : 'pm',
+    mm: padNum(d.getMinutes(), 2), m: String(d.getMinutes()),
+    ss: padNum(d.getSeconds(), 2), s: String(d.getSeconds()),
+    fff: padNum(d.getMilliseconds(), 3), ff: padNum(d.getMilliseconds(), 2).slice(0, 2), f: String(Math.floor(d.getMilliseconds() / 100)),
+  };
+}
+
+// Expand ${counter} and $date tokens inside the Replace text.
+function expandReplace(tpl, ctx) {
+  let out = String(tpl).replace(/\$\$/g, '\u0000'); // $$ is an escaped literal $
+
+  const vals = dateValues(ctx.date);
+  for (const tok of DATE_TOKENS) out = out.split('$' + tok).join(vals[tok]);
+
+  // ${}  ${start=X}  ${padding=X}  ${increment=X}   (combine with ;)
+  // As in PowerRename, these only work when "Enumerate items" is ticked.
+  if (ctx.enumerate) out = out.replace(/\$\{([^}]*)\}/g, (_, body) => {
+    const o = { start: 0, increment: 1, padding: 1 };
+    for (const part of String(body).split(';')) {
+      const m = part.trim().match(/^(\w+)\s*=\s*(-?\d+)$/);
+      if (m) o[m[1].toLowerCase()] = parseInt(m[2], 10);
+    }
+    return padNum(o.start + ctx.index * o.increment, o.padding);
+  });
+
+  // aliases kept from earlier versions so old patterns still work
+  out = out
+    .replace(/\{(?:n|i|index|num|no)(?:\s*:\s*(\d+))?\}/gi, (_, w) => padNum(ctx.index + 1, w ? +w : 1))
+    .replace(/\{(\d+)(?:\s*:\s*(\d+))?\}/g, (_, b, w) => padNum(parseInt(b, 10) + ctx.index, w ? +w : 1))
+    .replace(/\{title\}/gi, () => ctx.original)
+    .replace(/\{id\}/gi, () => ctx.id || '')
+    .replace(/\{total\}/gi, () => String(ctx.total));
+
+  return out.split('\u0000').join('$');
+}
+
+// Expand $1 / $& / $$ ourselves so a literal $ in the text is never misread.
+function substitute(tpl, match) {
+  return tpl.replace(/\$(\$|&|\d{1,2})/g, (_, g) => {
+    if (g === '$') return '$';
+    if (g === '&') return match[0];
+    const i = parseInt(g, 10);
+    return match[i] == null ? '' : match[i];
+  });
+}
+
+function replaceAll(source, search, tpl, all, caseSensitive) {
+  if (!search) return source;
+  const hay = caseSensitive ? source : source.toLowerCase();
+  const needle = caseSensitive ? search : search.toLowerCase();
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const pos = hay.indexOf(needle, i);
+    if (pos === -1) break;
+    out += source.slice(i, pos) + tpl;
+    i = pos + needle.length;
+    if (!all) break;
+  }
+  return out + source.slice(i);
+}
+
+function replaceRegex(source, pattern, tpl, all, caseSensitive) {
+  let re;
+  try {
+    re = new RegExp(pattern, (all ? 'g' : '') + (caseSensitive ? '' : 'i'));
+  } catch {
+    return null; // invalid pattern
+  }
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = re.exec(source)) !== null) {
+    out += source.slice(last, m.index) + substitute(tpl, m);
+    last = m.index + m[0].length;
+    if (m[0].length === 0) re.lastIndex++;
+    if (!re.global) break;
+  }
+  return out + source.slice(last);
+}
+
+function applyFormat(s, mode) {
+  if (mode === 'lower') return s.toLowerCase();
+  if (mode === 'upper') return s.toUpperCase();
+  if (mode === 'title') return s.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  if (mode === 'capitalize') return s.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
   return s;
 }
 
-// Recognised number tokens: {n} {i} {index} {num} {no}, or a literal start
-// number like {1} / {5}. Add ":2" to zero-pad, e.g. {n:2} -> 01, 02.
-const BULK_TOKEN_RE = /\{(?:n|i|index|num|no|total|title|id)(?::\d+)?\}/i;
-const BULK_NUM_RE = /\{\d+(?::\d+)?\}/;
-
-function bulkComputeTitle(v, index, total) {
-  const find = $('#bulk-find').value;
-  const repl = $('#bulk-replace').value;
-  const pattern = $('#bulk-pattern').value;
-  const start = parseInt($('#bulk-start').value, 10) || 0;
-
-  let base = v.title || v.youtubeId;
-  if (find) base = base.split(find).join(repl);
-  if (!pattern) return base;
-
-  return pattern
-    // {n:2} / {i:3} -> zero-padded sequence from the Start number
-    .replace(/\{(n|i|index|num|no)\s*:\s*(\d+)\}/gi, (_, _t, w) => padNum(start + index, +w))
-    // {1:2} / {5:3} -> zero-padded sequence from that literal number
-    .replace(/\{(\d+)\s*:\s*(\d+)\}/g, (_, b, w) => padNum(parseInt(b, 10) + index, +w))
-    // {n} / {i} -> the Start number field, counting up
-    .replace(/\{(?:n|i|index|num|no)\}/gi, () => String(start + index))
-    // {1} / {5} -> that number, counting up
-    .replace(/\{(\d+)\}/g, (_, b) => String(parseInt(b, 10) + index))
-    .replace(/\{total\}/gi, () => String(total))
-    .replace(/\{title\}/gi, () => base)
-    .replace(/\{id\}/gi, () => v.youtubeId);
+function bulkConfig() {
+  return {
+    search: $('#bulk-search').value,
+    replace: $('#bulk-replace').value,
+    regex: $('#opt-regex').checked,
+    all: $('#opt-all').checked,
+    caseSensitive: $('#opt-case').checked,
+    enumerate: $('#opt-enum').checked,
+    format: $('#bulk-format').value,
+  };
 }
 
-function renderBulkPreview() {
+// Work out the new title for every selected item, in order. The counter only
+// advances for items that actually change, like PowerRename does.
+function computeBulkPlan() {
   const items = bulkItems();
-  const ol = $('#bulk-preview');
-  ol.innerHTML = '';
-  items.slice(0, 3).forEach((v, i) => {
-    ol.appendChild(el('li', null, bulkComputeTitle(v, i, items.length)));
-  });
-  if (items.length > 3) ol.appendChild(el('li', 'muted', `…and ${items.length - 3} more`));
+  const cfg = bulkConfig();
+  const date = new Date();
+  let counter = 0;
 
-  // Warn if the pattern has no placeholder at all — every title would be identical.
-  const pattern = $('#bulk-pattern').value;
-  const hasToken = BULK_TOKEN_RE.test(pattern) || BULK_NUM_RE.test(pattern);
+  const rows = items.map((v) => {
+    const original = v.title || v.youtubeId || v.url || '';
+    let renamed = null;
+    let error = null;
+
+    if (cfg.search) {
+      const tpl = expandReplace(cfg.replace, {
+        index: counter, date, original, id: v.youtubeId, total: items.length, enumerate: cfg.enumerate,
+      });
+      renamed = cfg.regex
+        ? replaceRegex(original, cfg.search, tpl, cfg.all, cfg.caseSensitive)
+        : replaceAll(original, cfg.search, tpl, cfg.all, cfg.caseSensitive);
+      if (renamed === null) error = 'That is not a valid regular expression.';
+      else {
+        renamed = applyFormat(renamed, cfg.format);
+        if (renamed !== original) counter++;
+      }
+    } else if (cfg.replace) {
+      // no search text: the replacement becomes the whole title
+      renamed = applyFormat(
+        expandReplace(cfg.replace, { index: counter, date, original, id: v.youtubeId, total: items.length, enumerate: cfg.enumerate }),
+        cfg.format,
+      );
+      counter++;
+    }
+    return { v, original, renamed, error };
+  });
+
+  return { rows, cfg };
+}
+
+// Highlight only the part that changed, building nodes (never innerHTML).
+function appendDiff(td, a, b) {
+  if (a === b) {
+    td.textContent = b;
+    return;
+  }
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+  td.appendChild(document.createTextNode(b.slice(0, p)));
+  const mid = b.slice(p, b.length - s);
+  if (mid) {
+    const mark = document.createElement('mark');
+    mark.textContent = mid;
+    td.appendChild(mark);
+  }
+  if (s) td.appendChild(document.createTextNode(b.slice(b.length - s)));
+}
+
+function bulkRowEl(row, isChanged) {
+  const tr = document.createElement('tr');
+  if (!isChanged) tr.className = 'unchanged';
+
+  const tdPick = document.createElement('td');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'pick';
+  cb.checked = !state.bulkExcluded.has(row.v.id);
+  cb.disabled = !isChanged;
+  cb.setAttribute('aria-label', 'Include this item');
+  cb.onchange = () => {
+    if (cb.checked) state.bulkExcluded.delete(row.v.id);
+    else state.bulkExcluded.add(row.v.id);
+    renderBulkRows();
+  };
+  tdPick.appendChild(cb);
+  tr.appendChild(tdPick);
+
+  tr.appendChild(el('td', 'orig', row.original));
+
+  const tdNew = document.createElement('td');
+  tdNew.className = 'new';
+  if (row.error) tdNew.textContent = row.original;
+  else appendDiff(tdNew, row.original, row.renamed || '');
+  tr.appendChild(tdNew);
+
+  return tr;
+}
+
+function renderBulkRows() {
+  const { rows } = computeBulkPlan();
+  const tbody = $('#bulk-rows');
+  tbody.innerHTML = '';
+  const onlyChanged = $('#bulk-only-changed').checked;
+
+  let changed = 0;
+  let shown = 0;
+  for (const row of rows) {
+    const isChanged = !row.error && row.renamed !== row.original;
+    if (isChanged && !state.bulkExcluded.has(row.v.id)) changed++;
+    if (onlyChanged && !isChanged) continue;
+    shown++;
+    tbody.appendChild(bulkRowEl(row, isChanged));
+  }
+
+  if (!shown) {
+    const tr = document.createElement('tr');
+    const td = el('td', 'muted', rows.length ? 'No changes — nothing matches.' : 'Nothing selected.');
+    td.colSpan = 3;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  $('#bulk-count').textContent = `${changed} of ${rows.length} will be renamed`;
+
+  const cfg = bulkConfig();
+  const bad = rows.find((r) => r.error);
+  const needsEnum = /\$\{/.test(cfg.replace) && !cfg.enumerate;
   const warn = $('#bulk-warn');
-  warn.hidden = !(pattern && !hasToken);
-  warn.textContent = warn.hidden
-    ? ''
-    : 'This pattern has no placeholder, so every selected video would get the same title. Use {n}, or {1} to number them.';
+  warn.hidden = !bad && !needsEnum;
+  warn.textContent = bad
+    ? bad.error
+    : needsEnum
+      ? 'Tick "Enumerate items" for ${...} counters to be used.'
+      : '';
+}
+
+const BULK_MRU_KEY = 'ytq_bulk_mru';
+
+function saveBulkMru(cfg) {
+  try {
+    localStorage.setItem(BULK_MRU_KEY, JSON.stringify(cfg));
+  } catch {
+    /* storage may be unavailable */
+  }
 }
 
 function openBulkRename() {
   const items = bulkItems();
   if (!items.length) return;
-  $('#bulk-sub').textContent = `Renaming ${items.length} selected video${items.length > 1 ? 's' : ''}.`;
-  $('#bulk-find').value = '';
-  $('#bulk-replace').value = '';
-  $('#bulk-pattern').value = '';
-  $('#bulk-start').value = '1';
-  renderBulkPreview();
+  $('#bulk-sub').textContent = `${items.length} selected item${items.length > 1 ? 's' : ''}.`;
+  state.bulkExcluded = new Set();
+
+  let recent = null;
+  try {
+    recent = JSON.parse(localStorage.getItem(BULK_MRU_KEY) || 'null');
+  } catch {
+    recent = null;
+  }
+  $('#bulk-search').value = recent ? recent.search || '' : '';
+  $('#bulk-replace').value = recent ? recent.replace || '' : '';
+  $('#opt-regex').checked = !!(recent && recent.regex);
+  $('#opt-all').checked = recent ? recent.all !== false : true;
+  $('#opt-case').checked = !!(recent && recent.caseSensitive);
+  $('#opt-enum').checked = !!(recent && recent.enumerate);
+  $('#bulk-format').value = recent && recent.format ? recent.format : 'none';
+  $('#bulk-only-changed').checked = false;
+
+  renderBulkRows();
   $('#bulk-modal').hidden = false;
-  setTimeout(() => $('#bulk-find').focus(), 30);
+  setTimeout(() => $('#bulk-search').focus(), 30);
 }
 
 function closeBulkRename() {
   $('#bulk-modal').hidden = true;
 }
 
+let lastUndo = null;
+
+function offerUndo(entries) {
+  lastUndo = entries;
+  $('#undo-text').textContent = `Renamed ${entries.length} item${entries.length > 1 ? 's' : ''}.`;
+  $('#undo-bar').hidden = false;
+}
+
+async function undoRename() {
+  const entries = lastUndo;
+  if (!entries) return;
+  lastUndo = null;
+  $('#undo-bar').hidden = true;
+
+  let failed = 0;
+  await Promise.all(
+    entries.map(async (e) => {
+      try {
+        await api('/videos/' + e.id, { method: 'PATCH', body: { title: e.title == null ? '' : e.title } });
+        const v = state.videos.find((x) => x.id === e.id);
+        if (v) v.title = e.title == null ? null : e.title;
+      } catch {
+        failed += 1;
+      }
+    }),
+  );
+  renderSeries();
+  toast(failed ? `${failed} could not be restored.` : 'Rename undone.');
+}
+
 async function applyBulkRename() {
-  const items = bulkItems();
-  const total = items.length;
-  if (!total) return;
-  const titles = items.map((v, i) => bulkComputeTitle(v, i, total));
+  const { rows, cfg } = computeBulkPlan();
+  const targets = rows.filter((r) => !r.error && r.renamed !== r.original && !state.bulkExcluded.has(r.v.id));
+  if (!targets.length) {
+    closeBulkRename();
+    toast('Nothing to rename.');
+    return;
+  }
+  saveBulkMru(cfg);
 
   const btn = $('#bulk-apply');
   btn.disabled = true;
   btn.textContent = 'Applying…';
+  const undo = [];
   let failed = 0;
   try {
     await Promise.all(
-      items.map(async (v, i) => {
+      targets.map(async (r) => {
         try {
-          await api('/videos/' + v.id, { method: 'PATCH', body: { title: titles[i] } });
-          v.title = titles[i] || null;
+          await api('/videos/' + r.v.id, { method: 'PATCH', body: { title: r.renamed } });
+          undo.push({ id: r.v.id, title: r.v.title });
+          r.v.title = r.renamed || null;
+          r.v.titleAuto = false;
         } catch {
           failed += 1;
         }
@@ -609,13 +868,14 @@ async function applyBulkRename() {
     btn.disabled = false;
     btn.textContent = 'Apply';
   }
+
   closeBulkRename();
   state.selected.clear();
   state.selectMode = false;
   $('#select-toggle').setAttribute('aria-pressed', 'false');
   renderSeries();
-  if (failed) toast(`${failed} of ${total} titles could not be saved.`);
-  else toast(`Renamed ${total} video${total > 1 ? 's' : ''}.`);
+  if (undo.length) offerUndo(undo);
+  if (failed) toast(`${failed} of ${targets.length} could not be renamed.`);
 }
 
 async function bulkMarkWatched() {
@@ -1087,11 +1347,20 @@ function wireEvents() {
   $('#bulk-delete-btn').onclick = () => bulkDelete();
   $('#bulk-cancel').onclick = () => closeBulkRename();
   $('#bulk-apply').onclick = () => applyBulkRename();
-  ['#bulk-find', '#bulk-replace', '#bulk-pattern', '#bulk-start'].forEach((s) =>
-    $(s).addEventListener('input', renderBulkPreview),
+  ['#bulk-search', '#bulk-replace'].forEach((s) => $(s).addEventListener('input', renderBulkRows));
+  ['#opt-regex', '#opt-all', '#opt-case', '#opt-enum', '#bulk-only-changed'].forEach((s) =>
+    $(s).addEventListener('change', renderBulkRows),
   );
+  $('#bulk-format').addEventListener('change', renderBulkRows);
   $('#bulk-modal').onclick = (e) => {
     if (e.target === $('#bulk-modal')) closeBulkRename();
+  };
+
+  // undo the last rename
+  $('#undo-btn').onclick = () => undoRename();
+  $('#undo-dismiss').onclick = () => {
+    lastUndo = null;
+    $('#undo-bar').hidden = true;
   };
 
   // export

@@ -72,6 +72,14 @@
         <button id="export-btn" class="ghost" type="button">Export</button>
       </div>
 
+      <div id="undo-bar" class="undo-bar card" hidden>
+        <span id="undo-text" class="muted"></span>
+        <div class="selection-actions">
+          <button id="undo-btn" class="ghost" type="button">Undo</button>
+          <button id="undo-dismiss" class="ghost" type="button">Dismiss</button>
+        </div>
+      </div>
+
       <div id="selection-bar" class="selection-bar card" hidden>
         <span id="selection-count" class="muted"></span>
         <div class="selection-actions">
@@ -140,29 +148,60 @@
     </div>
   </div>
 
-  <!-- ---------- Bulk rename modal ---------- -->
+  <!-- ---------- Rename (PowerRename-style) ---------- -->
   <div id="bulk-modal" class="modal-backdrop" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bulk-title">
-      <h3 id="bulk-title">Bulk rename</h3>
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="bulk-title">
+      <h3 id="bulk-title">Rename</h3>
       <p class="muted" id="bulk-sub"></p>
-      <label class="field">Find
-        <input id="bulk-find" type="text" autocomplete="off" placeholder="text to find (optional)">
+
+      <label class="field">Search for
+        <input id="bulk-search" type="text" autocomplete="off" placeholder="text, or a regular expression">
       </label>
       <label class="field">Replace with
-        <input id="bulk-replace" type="text" autocomplete="off" placeholder="replacement (optional)">
+        <input id="bulk-replace" type="text" autocomplete="off" placeholder="replacement — ${} counter, $YYYY date, $1 group">
       </label>
-      <label class="field">New title pattern
-        <input id="bulk-pattern" type="text" autocomplete="off" placeholder="e.g. Part {n} — {title}">
-      </label>
-      <p class="hint">Number: <code>{n}</code>, or <code>{1}</code> to start at 1, or <code>{n:2}</code> for 01, 02 &middot; also <code>{title}</code> current title &middot; <code>{id}</code> YouTube id &middot; <code>{total}</code> how many are selected</p>
-      <label class="field">Start number (used by <code>{n}</code>)
-        <input id="bulk-start" type="number" min="0" value="1">
-      </label>
-      <div class="preview">
-        <div class="hint">Preview</div>
-        <ol id="bulk-preview"></ol>
-        <p id="bulk-warn" class="warn" hidden></p>
+
+      <div class="opts">
+        <label class="check"><input id="opt-regex" type="checkbox"> Use regular expressions</label>
+        <label class="check"><input id="opt-all" type="checkbox" checked> Match all occurrences</label>
+        <label class="check"><input id="opt-case" type="checkbox"> Case sensitive</label>
+        <label class="check"><input id="opt-enum" type="checkbox"> Enumerate items</label>
       </div>
+
+      <label class="field">Text formatting
+        <select id="bulk-format">
+          <option value="none">None</option>
+          <option value="lower">lowercase</option>
+          <option value="upper">UPPERCASE</option>
+          <option value="title">Title Case</option>
+          <option value="capitalize">Capitalize Each Word</option>
+        </select>
+      </label>
+
+      <details class="help">
+        <summary class="hint">Variables</summary>
+        <div class="hint help-body">
+          <p><b>Counter</b> (tick Enumerate items): <code>${}</code> starts at 0 &middot; <code>${start=1}</code> &middot; <code>${padding=3}</code> &middot; <code>${increment=2}</code> — combine with <code>;</code> e.g. <code>${start=10;increment=2;padding=4}</code></p>
+          <p><b>Date &amp; time</b>: <code>$YYYY</code> <code>$YY</code> <code>$MMMM</code> <code>$MMM</code> <code>$MM</code> <code>$M</code> <code>$DDDD</code> <code>$DDD</code> <code>$DD</code> <code>$D</code> <code>$HH</code> <code>$hh</code> <code>$TT</code> <code>$mm</code> <code>$ss</code> <code>$fff</code> &middot; <code>$$</code> is a literal $</p>
+          <p><b>Regex groups</b> (with regular expressions on): <code>$1</code> <code>$2</code> &hellip; and <code>$&amp;</code></p>
+          <p><b>Also</b>: <code>{title}</code> <code>{n}</code> <code>{1}</code> <code>{n:2}</code> <code>{total}</code></p>
+        </div>
+      </details>
+
+      <div class="preview">
+        <div class="preview-head">
+          <span class="hint" id="bulk-count"></span>
+          <label class="check"><input id="bulk-only-changed" type="checkbox"> Show only renamed</label>
+        </div>
+        <div class="preview-scroll">
+          <table class="preview-table">
+            <thead><tr><th></th><th>Original</th><th>Renamed</th></tr></thead>
+            <tbody id="bulk-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <p id="bulk-warn" class="warn" hidden></p>
       <div class="modal-actions">
         <button id="bulk-cancel" class="ghost" type="button">Cancel</button>
         <button id="bulk-apply" class="primary" type="button">Apply</button>

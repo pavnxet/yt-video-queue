@@ -33,10 +33,21 @@ only **your** passkey opens it.
 
 **Organising**
 - **Rename** any video or series.
-- **Multi-select** (the *Select* button) with **Bulk rename**, **Mark watched**,
+- **Multi-select** (the *Select* button) with **Rename**, **Mark watched**,
   **Delete** and **Clear**.
-- Bulk rename supports find & replace and a title pattern with `{n}`, `{1}`,
-  `{n:2}` (zero-padded), `{title}`, `{id}` and `{total}`, with a live preview.
+- **Rename works like PowerRename**: *Search for* / *Replace with*, plus
+  *Use regular expressions* (with `$1`, `$2` … and `$&` capture references),
+  *Match all occurrences*, *Case sensitive* and *Enumerate items*.
+  - Counters: `${}` (starts at 0), `${start=1}`, `${padding=3}`,
+    `${increment=2}` — combine them with `;`, e.g. `${start=10;increment=2;padding=4}`.
+  - Date & time: `$YYYY $YY $Y $MMMM $MMM $MM $M $DDDD $DDD $DD $D $HH $hh $TT $tt $mm $ss $fff`,
+    and `$$` for a literal `$`.
+  - Text formatting: lowercase / UPPERCASE / Title Case / Capitalize Each Word.
+  - Older aliases `{title} {n} {1} {n:2} {total}` still work.
+- A **live preview table** shows Original → Renamed with the changed part
+  highlighted, a *Show only renamed* filter, a count, and a checkbox on every
+  row so you can leave individual items out.
+- **Undo** restores the previous titles after applying.
 - Reorder with ↑ / ↓.
 
 **Exporting a series as a playlist**
@@ -236,6 +247,10 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.2** — PowerRename-style renaming: search/replace with regular expressions
+  and capture groups, match-all, case sensitivity, enumerate counters, date/time
+  variables, text formatting, a live preview table with per-item checkboxes and
+  highlighted diffs, and undo.
 - **v1.1** — multi-source: add Telegram posts and any web link alongside YouTube,
   with automatic titles/thumbnails and a graceful fallback name when a page
   cannot be read.
