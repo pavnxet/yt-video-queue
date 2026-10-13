@@ -4,7 +4,7 @@ import { API_BASE_URL } from './config.js';
 import { QueuePlayer } from './player.js';
 import { startRegistration, startAuthentication } from 'https://esm.sh/@simplewebauthn/browser@13';
 
-const VERSION = '1.0';
+const VERSION = '1.1';
 const TOKEN_KEY = 'ytq_token';
 const VIEWS = ['login-view', 'dashboard-view', 'series-view', 'player-view'];
 
@@ -99,6 +99,21 @@ function el(tag, className, text) {
 function indexInSeries(video) {
   return state.videos.findIndex((x) => x.id === video.id);
 }
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+// neutral tile shown when a page has no thumbnail we can use
+const PLACEHOLDER_IMG =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#c2c0b6"/><path d="M138 68l48 22-48 22z" fill="#faf9f5"/></svg>',
+  );
 
 // -------------------------------------------------------------------- theme
 // 'light' | 'dark' | absent (absent = follow the system, like Claude does)
@@ -338,24 +353,29 @@ function videoRow(v, index) {
     };
   }
 
-  // YouTube serves these thumbnails straight off i.ytimg.com — no API key.
+  // Thumbnail: the page's og:image, else the YouTube still, else a neutral tile.
   const thumb = document.createElement('img');
   thumb.className = 'thumb';
   thumb.loading = 'lazy';
   thumb.decoding = 'async';
   thumb.alt = '';
-  thumb.src = `https://i.ytimg.com/vi/${v.youtubeId}/mqdefault.jpg`;
+  thumb.src =
+    v.imageUrl || (v.youtubeId ? `https://i.ytimg.com/vi/${v.youtubeId}/mqdefault.jpg` : PLACEHOLDER_IMG);
   thumb.onerror = () => thumb.classList.add('is-missing');
   li.appendChild(thumb);
 
   const main = el('div', 'vmain');
   if (index != null) main.appendChild(el('span', 'idx', String(index)));
 
-  const title = el('span', 'vtitle', v.title || v.youtubeId);
-  title.title = v.title ? `${v.title} · ${v.youtubeId}` : v.youtubeId;
+  const title = el('span', 'vtitle', v.title || v.youtubeId || v.url || 'Untitled');
+  title.title = [v.title, v.url || v.youtubeId].filter(Boolean).join(' · ');
   main.appendChild(title);
 
   if (v.status === 'watching') main.appendChild(el('span', 'badge', 'watching'));
+  if (v.source && v.source !== 'youtube') {
+    main.appendChild(el('span', 'src-chip', v.siteName || hostOf(v.url) || v.source));
+  }
+  if (v.titleAuto) main.appendChild(el('span', 'auto-tag', 'auto'));
   li.appendChild(main);
 
   const actions = el('div', 'row-actions');
@@ -427,7 +447,7 @@ async function removeVideo(id) {
   }
   if (state.currentVideoId === id) {
     state.currentVideoId = null;
-    if (player) player.pause();
+    pauseYt();
     $('#now-title').textContent = '';
     $('#now-progress').textContent = '';
   }
@@ -800,28 +820,72 @@ function prevBefore(video) {
   return before.length ? before[before.length - 1] : null;
 }
 
+function pauseYt() {
+  if (player) player.pause();
+}
+
+// three ways to watch: the YouTube player, a generic iframe (Telegram), or an
+// external card for sites that refuse to be framed
+function showPlayerMode(mode, arg) {
+  const frame = $('#frame-player');
+  $('#yt-player').hidden = mode !== 'yt';
+  frame.hidden = mode !== 'frame';
+  $('#external-player').hidden = mode !== 'external';
+
+  if (mode === 'frame') {
+    frame.src = arg;
+  } else if (frame.getAttribute('src')) {
+    frame.removeAttribute('src');
+  }
+
+  if (mode === 'external') {
+    const v = arg;
+    $('#ext-site').textContent = v.siteName || hostOf(v.url) || '';
+    $('#ext-title').textContent = v.title || v.url || '';
+    const img = $('#ext-image');
+    if (v.imageUrl) {
+      img.src = v.imageUrl;
+      img.hidden = false;
+    } else {
+      img.hidden = true;
+      img.removeAttribute('src');
+    }
+    $('#ext-open').href = v.url || '#';
+    $('#now-progress').textContent = 'Opens in a new tab — mark it done here when you have finished.';
+  }
+}
+
 async function openPlayer(videoId) {
   // show the view first: the YouTube player needs a laid-out container to size itself
   show('player-view');
   const v = state.videos.find((x) => x.id === videoId);
   if (!v) return;
-  try {
-    await ensurePlayer();
-  } catch (e) {
-    $('#now-progress').textContent = 'Could not load the YouTube player. Check your connection and try again.';
-    return;
-  }
   await playVideo(v);
 }
 
 async function playVideo(v) {
   state.currentVideoId = v.id;
-  $('#now-title').textContent = v.title || v.youtubeId;
+  $('#now-title').textContent = v.title || v.url || v.youtubeId || 'Untitled';
   const list = activeVideos();
   const i = list.findIndex((x) => x.id === v.id);
   $('#now-progress').textContent = i === -1 ? '' : `${i + 1} of ${list.length}`;
   updateUpNext();
-  await player.load(v);
+
+  if (v.source === 'youtube' && v.youtubeId) {
+    showPlayerMode('yt');
+    try {
+      await ensurePlayer();
+    } catch {
+      $('#now-progress').textContent = 'Could not load the YouTube player. Check your connection and try again.';
+      return;
+    }
+    await player.load(v);
+    return;
+  }
+
+  pauseYt();
+  if (v.embeddable && (v.embedUrl || v.url)) showPlayerMode('frame', v.embedUrl || v.url);
+  else showPlayerMode('external', v);
 }
 
 function updateUpNext() {
@@ -947,15 +1011,30 @@ function wireEvents() {
 
   $('#add-videos-form').onsubmit = async (e) => {
     e.preventDefault();
-    const urls = $('#video-links').value.trim();
-    if (!urls) return;
+    const raw = $('#video-links').value.trim();
+    if (!raw) return;
+    const tokens = raw.split(/[\s,]+/).filter(Boolean);
+    if (!tokens.length) return;
     const btn = e.submitter;
     if (btn) btn.disabled = true;
+    let added = 0;
+    let skipped = 0;
     try {
-      const res = await api('/series/' + state.currentSeries.id + '/videos', { method: 'POST', body: { urls } });
+      // Send in batches: each link costs a metadata lookup, and the Worker has a
+      // per-request subrequest budget, so a big paste is split up.
+      const BATCH = 20;
+      for (let i = 0; i < tokens.length; i += BATCH) {
+        const chunk = tokens.slice(i, i + BATCH).join('\n');
+        const res = await api('/series/' + state.currentSeries.id + '/videos', {
+          method: 'POST',
+          body: { urls: chunk },
+        });
+        added += res && res.added ? res.added : 0;
+        skipped += res && res.skipped ? res.skipped : 0;
+      }
       $('#video-links').value = '';
       await openSeries(state.currentSeries.id);
-      toast(`Added ${res && res.added ? res.added : 0} video${res && res.added === 1 ? '' : 's'}.`);
+      toast(`Added ${added} item${added === 1 ? '' : 's'}${skipped ? ` · skipped ${skipped}` : ''}.`);
     } catch (err) {
       toast('Could not add: ' + (err.message || err));
     } finally {
@@ -967,11 +1046,11 @@ function wireEvents() {
   $('#export-btn').onclick = () => openExport();
 
   $('#back-to-dash').onclick = () => {
-    if (player) player.pause();
+    pauseYt();
     loadDashboard().catch((e) => toast('Could not load: ' + (e.message || e)));
   };
   $('#back-to-series').onclick = () => {
-    if (player) player.pause();
+    pauseYt();
     openSeries(state.currentSeries.id).catch((e) => toast('Could not load: ' + (e.message || e)));
   };
 

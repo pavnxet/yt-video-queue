@@ -435,6 +435,51 @@ select:focus { outline: 2px solid var(--ring); outline-offset: 1px; border-color
   animation: fade 0.18s var(--ease);
 }
 
+/* --- non-YouTube sources ------------------------------------------------ */
+.src-chip,
+.auto-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--faint);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auto-tag { border-style: dashed; text-transform: uppercase; }
+
+/* generic iframe (Telegram) and the external card for non-framable sites */
+.frame-player { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+.external {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 100%;
+  padding: 22px;
+  text-align: center;
+  background: var(--surface-2);
+}
+.external img { max-width: 100%; max-height: 40%; object-fit: contain; border-radius: var(--radius-sm); }
+.external-body { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 440px; }
+.external-body h3 { margin: 0; overflow-wrap: anywhere; }
+.btn-link {
+  display: inline-block;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.btn-link.primary { background: var(--accent); color: #ffffff; }
+.btn-link.primary:hover { background: var(--accent-hover); }
+
 /* footer */
 .foot {
   max-width: 900px;

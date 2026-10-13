@@ -1,11 +1,12 @@
 # YT Video Queue
 
-**v1.0** — a personal, passkey-protected watch queue for YouTube.
+**v1.1** — a personal, passkey-protected watch queue for YouTube, Telegram and
+any other web video link.
 
-Add YouTube links into ordered **series**, watch them **one by one**, and have the
-next video queued automatically when one finishes. Progress is saved, so you
-resume anywhere. Login is **passkey-only** (WebAuthn) — no passwords — and by
-default only **your** passkey opens it.
+Add links into ordered **series**, watch them **one by one**, and have the next
+video queued automatically when one finishes. Progress is saved, so you resume
+anywhere. Login is **passkey-only** (WebAuthn) — no passwords — and by default
+only **your** passkey opens it.
 
 - Static UI on **GitHub Pages**
 - Data in **Turso** (libSQL)
@@ -16,8 +17,14 @@ default only **your** passkey opens it.
 ## Features
 
 **Watching**
-- Ordered series of YouTube links; the player walks the queue and auto-advances
-  when a video ends.
+- **Any source.** YouTube links play in the built-in player; Telegram posts
+  (`t.me/…`) are embedded; any other web link opens in a new tab, because most
+  sites refuse to be framed. Titles, thumbnails and site names are read from the
+  page automatically.
+- If a page can't be read — blocked, timed out, no title, a bot wall — the row is
+  still named, from the link itself ("t.me · SomeChannel post 123"), and tagged
+  **auto** so you know it was guessed and can rename it.
+- Ordered series; the player walks the queue and auto-advances when a video ends.
 - Resume where you left off — playback position is saved every few seconds.
 - `Prev` / `Next`, and a **Mark done & next** button that always advances.
 - **Auto-advance** toggle.
@@ -183,8 +190,16 @@ Serve the frontend with any static server, point `frontend/config.js` at
 - **Sessions.** Opaque random tokens; only their SHA-256 hash is stored in the
   `sessions` table. The raw token lives in the browser's `localStorage` and is
   sent as `Authorization: Bearer`. Sessions last 30 days.
-- **Thumbnails** come from `i.ytimg.com` (no API key). Titles are filled in from
-  YouTube's public oEmbed endpoint when a video is added.
+- **Sources.** A link is classified when it is added: a YouTube link keeps its
+  video id; a `t.me` / `telegram.me` link is stored as a Telegram post and gets
+  an embed URL; anything else is stored as a plain web link. Titles come from
+  `og:title`, then `<title>`; thumbnails from `og:image`; YouTube titles come
+  from the public oEmbed endpoint. Nothing is sent anywhere except a plain GET
+  to the page you pasted.
+- **Adding many links.** Each link costs one metadata lookup, so the frontend
+  sends them in batches of 20. Links it cannot recognise are skipped and counted.
+- **Not embeddable on purpose.** Only YouTube and Telegram are framed; the CSP
+  `frame-src` is kept narrow rather than opened to every host.
 
 ---
 
@@ -221,6 +236,9 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.1** — multi-source: add Telegram posts and any web link alongside YouTube,
+  with automatic titles/thumbnails and a graceful fallback name when a page
+  cannot be read.
 - **v1.0** — first complete release: passkey auth, series and video management,
   auto-advancing queue with resume, watched section, rename + bulk rename,
   thumbnail grid / compact / list views, playlist export, Claude-style theme,

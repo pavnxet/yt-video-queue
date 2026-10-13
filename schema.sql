@@ -61,7 +61,14 @@ CREATE TABLE IF NOT EXISTS videos (
   id                TEXT PRIMARY KEY,           -- uuid (our id)
   series_id         TEXT NOT NULL REFERENCES series(id) ON DELETE CASCADE,
   position          INTEGER NOT NULL,           -- order within the series
-  youtube_id        TEXT NOT NULL,              -- 11-char YouTube video id
+  youtube_id        TEXT,                       -- set for YouTube videos
+  source            TEXT NOT NULL DEFAULT 'youtube', -- youtube | telegram | web
+  url               TEXT,                       -- canonical link for the source
+  image_url         TEXT,                       -- thumbnail (og:image or ytimg)
+  site_name         TEXT,
+  embeddable        INTEGER NOT NULL DEFAULT 0, -- can it play in an iframe?
+  embed_url         TEXT,
+  title_auto        INTEGER NOT NULL DEFAULT 0, -- title guessed from the URL
   title             TEXT,
   duration_seconds  INTEGER,
   status            TEXT NOT NULL DEFAULT 'todo',   -- todo | watching | done
@@ -69,6 +76,8 @@ CREATE TABLE IF NOT EXISTS videos (
   watched_at        TEXT,
   created_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Databases created before v1.1 (youtube_id NOT NULL, no source/url) are rebuilt
+-- automatically by the Worker on its first request after the upgrade.
 CREATE INDEX IF NOT EXISTS idx_videos_series ON videos(series_id, position);
 
 -- Small key/value config so settings can change without a redeploy.

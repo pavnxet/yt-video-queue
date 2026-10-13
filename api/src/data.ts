@@ -1,5 +1,6 @@
 import { db } from './db';
-import { json, fail, uuid, parseYouTubeId, nowIso } from './util';
+import { json, fail, uuid, nowIso } from './util';
+import { fetchMeta, type LinkMeta } from './meta';
 import type { Env, SessionUser } from './types';
 
 // ---- ownership helpers ----------------------------------------------------
@@ -37,7 +38,14 @@ function videoJson(v: any) {
     id: String(v.id),
     seriesId: String(v.series_id),
     position: Number(v.position),
-    youtubeId: String(v.youtube_id),
+    source: v.source == null ? 'youtube' : String(v.source),
+    youtubeId: v.youtube_id == null ? null : String(v.youtube_id),
+    url: v.url == null ? null : String(v.url),
+    imageUrl: v.image_url == null ? null : String(v.image_url),
+    siteName: v.site_name == null ? null : String(v.site_name),
+    embeddable: Number(v.embeddable ?? 0) === 1,
+    embedUrl: v.embed_url == null ? null : String(v.embed_url),
+    titleAuto: Number(v.title_auto ?? 0) === 1,
     title: v.title == null ? null : String(v.title),
     durationSeconds: v.duration_seconds == null ? null : Number(v.duration_seconds),
     status: String(v.status),
@@ -46,19 +54,18 @@ function videoJson(v: any) {
   };
 }
 
-async function fetchTitle(youtubeId: string): Promise<string | null> {
-  try {
-    const url =
-      'https://www.youtube.com/oembed?url=' +
-      encodeURIComponent('https://www.youtube.com/watch?v=' + youtubeId) +
-      '&format=json';
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    return typeof j.title === 'string' ? j.title : null;
-  } catch {
-    return null;
-  }
+/** Run async work over a list a few items at a time. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
 // ---- series ---------------------------------------------------------------
@@ -166,15 +173,16 @@ export async function addVideos(request: Request, env: Env, user: SessionUser, s
   if (Array.isArray(body.urls)) for (const u of body.urls) if (typeof u === 'string') inputs.push(u);
   if (!inputs.length) return fail('No links provided.');
 
-  const parsed: string[] = [];
+  const tokens: string[] = [];
   for (const raw of inputs) {
-    for (const piece of raw.split(/[\s,]+/)) {
-      if (!piece) continue;
-      const ytId = parseYouTubeId(piece);
-      if (ytId) parsed.push(ytId);
-    }
+    for (const piece of raw.split(/[\s,]+/)) if (piece) tokens.push(piece);
   }
-  if (!parsed.length) return fail('No valid YouTube links found.');
+  if (!tokens.length) return fail('No links provided.');
+
+  // Look the links up a few at a time so a big paste still feels quick.
+  const looked = await mapPool(tokens, 6, (t) => fetchMeta(t));
+  const metas = looked.filter((m): m is LinkMeta => m !== null);
+  if (!metas.length) return fail('No valid links found.');
 
   const posRes = await db(env).execute({
     sql: 'SELECT COALESCE(MAX(position), -1) + 1 AS p FROM videos WHERE series_id = ?',
@@ -183,16 +191,31 @@ export async function addVideos(request: Request, env: Env, user: SessionUser, s
   let position = Number(posRes.rows[0]?.p ?? 0);
 
   const created: string[] = [];
-  for (const ytId of parsed) {
+  for (const m of metas) {
     const id = uuid();
-    const title = await fetchTitle(ytId); // best-effort, non-fatal
     await db(env).execute({
-      sql: 'INSERT INTO videos (id, series_id, position, youtube_id, title) VALUES (?, ?, ?, ?, ?)',
-      args: [id, seriesId, position++, ytId, title],
+      sql: `INSERT INTO videos
+              (id, series_id, position, youtube_id, source, url, image_url, site_name,
+               embeddable, embed_url, title_auto, title)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        id,
+        seriesId,
+        position++,
+        m.youtubeId,
+        m.kind,
+        m.url,
+        m.imageUrl,
+        m.siteName,
+        m.embeddable ? 1 : 0,
+        m.embedUrl,
+        m.titleAuto ? 1 : 0,
+        m.title,
+      ],
     });
     created.push(id);
   }
-  return json({ added: created.length, ids: created }, 201);
+  return json({ added: created.length, ids: created, skipped: tokens.length - metas.length }, 201);
 }
 
 export async function reorderVideos(request: Request, env: Env, user: SessionUser, seriesId: string): Promise<Response> {
@@ -238,6 +261,7 @@ export async function patchVideo(request: Request, env: Env, user: SessionUser, 
   if (typeof body.title === 'string') {
     fields.push('title = ?');
     args.push(body.title);
+    fields.push('title_auto = 0'); // renamed by hand, so it is no longer a guess
   }
   if (typeof body.durationSeconds === 'number') {
     fields.push('duration_seconds = ?');
