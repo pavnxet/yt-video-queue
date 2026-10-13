@@ -68,6 +68,17 @@
           <button type="button" class="view-btn" data-view="compact" title="Compact — thumbnails and titles" aria-label="Compact view">▤</button>
           <button type="button" class="view-btn" data-view="list" title="Text list" aria-label="List view">☰</button>
         </div>
+        <button id="select-toggle" class="ghost" type="button" aria-pressed="false">Select</button>
+      </div>
+
+      <div id="selection-bar" class="selection-bar card" hidden>
+        <span id="selection-count" class="muted"></span>
+        <div class="selection-actions">
+          <button id="bulk-rename-btn" class="primary" type="button">Bulk rename</button>
+          <button id="bulk-watch-btn" class="ghost" type="button">Mark watched</button>
+          <button id="bulk-delete-btn" class="ghost" type="button">Delete</button>
+          <button id="bulk-clear-btn" class="ghost" type="button">Clear</button>
+        </div>
       </div>
 
       <form id="add-videos-form" class="card">
@@ -112,6 +123,35 @@
       <div class="modal-actions">
         <button id="modal-cancel" class="ghost">Cancel</button>
         <button id="modal-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- Bulk rename modal ---------- -->
+  <div id="bulk-modal" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bulk-title">
+      <h3 id="bulk-title">Bulk rename</h3>
+      <p class="muted" id="bulk-sub"></p>
+      <label class="field">Find
+        <input id="bulk-find" type="text" autocomplete="off" placeholder="text to find (optional)">
+      </label>
+      <label class="field">Replace with
+        <input id="bulk-replace" type="text" autocomplete="off" placeholder="replacement (optional)">
+      </label>
+      <label class="field">New title pattern
+        <input id="bulk-pattern" type="text" autocomplete="off" placeholder="e.g. Part {n} — {title}">
+      </label>
+      <p class="hint">Placeholders: <code>{n}</code> number &middot; <code>{title}</code> current title &middot; <code>{id}</code> YouTube id &middot; <code>{total}</code> how many are selected</p>
+      <label class="field">Start number (used by <code>{n}</code>)
+        <input id="bulk-start" type="number" min="0" value="1">
+      </label>
+      <div class="preview">
+        <div class="hint">Preview</div>
+        <ol id="bulk-preview"></ol>
+      </div>
+      <div class="modal-actions">
+        <button id="bulk-cancel" class="ghost" type="button">Cancel</button>
+        <button id="bulk-apply" class="primary" type="button">Apply</button>
       </div>
     </div>
   </div>

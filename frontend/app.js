@@ -17,6 +17,8 @@ const state = {
   currentVideoId: null,
   autoplay: true,
   view: 'compact',
+  selectMode: false,
+  selected: new Set(),
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -252,6 +254,7 @@ async function openSeries(id) {
   const data = await api('/series/' + id);
   state.currentSeries = data.series;
   state.videos = data.videos;
+  state.selected.clear();
   show('series-view');
   renderSeries();
 }
@@ -282,10 +285,28 @@ function renderSeries() {
   watched.forEach((v) => wl.appendChild(videoRow(v, null)));
   $('#watched-summary').textContent = `Watched (${watched.length})`;
   $('#watched-section').hidden = watched.length === 0;
+  updateSelectionBar();
 }
 
 function videoRow(v, index) {
   const li = el('li', 'video-item status-' + v.status);
+  if (state.selected.has(v.id)) li.classList.add('selected');
+
+  if (state.selectMode) {
+    li.classList.add('selectable');
+    const pick = document.createElement('input');
+    pick.type = 'checkbox';
+    pick.className = 'pick';
+    pick.checked = state.selected.has(v.id);
+    pick.setAttribute('aria-label', 'Select video');
+    pick.onchange = () => toggleSelect(v.id, pick.checked);
+    li.appendChild(pick);
+    // tapping anywhere on the row also toggles it (handy on touch)
+    li.onclick = (e) => {
+      if (e.target.closest('button, input')) return;
+      toggleSelect(v.id, !state.selected.has(v.id));
+    };
+  }
 
   // YouTube serves these thumbnails straight off i.ytimg.com — no API key.
   const thumb = document.createElement('img');
@@ -391,6 +412,134 @@ function renameSeries() {
       renderSeries();
     },
   });
+}
+
+// ------------------------------------------------------- selection & bulk
+function selectedVideos() {
+  return state.videos.filter((v) => state.selected.has(v.id));
+}
+
+function updateSelectionBar() {
+  const bar = $('#selection-bar');
+  const n = state.selected.size;
+  bar.hidden = !(state.selectMode && n > 0);
+  $('#selection-count').textContent = `${n} selected`;
+}
+
+function toggleSelect(id, on) {
+  if (on) state.selected.add(id);
+  else state.selected.delete(id);
+  renderSeries();
+}
+
+function setSelectMode(on) {
+  state.selectMode = on;
+  if (!on) state.selected.clear();
+  $('#select-toggle').setAttribute('aria-pressed', String(on));
+  renderSeries();
+}
+
+// ---- bulk rename ----------------------------------------------------------
+function bulkItems() {
+  return state.videos.filter((v) => state.selected.has(v.id));
+}
+
+function bulkComputeTitle(v, index, total) {
+  const find = $('#bulk-find').value;
+  const repl = $('#bulk-replace').value;
+  const pattern = $('#bulk-pattern').value;
+  const start = parseInt($('#bulk-start').value, 10) || 0;
+
+  let base = v.title || v.youtubeId;
+  if (find) base = base.split(find).join(repl);
+
+  if (pattern) {
+    return pattern
+      .replace(/\{n\}/g, String(start + index))
+      .replace(/\{total\}/g, String(total))
+      .replace(/\{title\}/g, base)
+      .replace(/\{id\}/g, v.youtubeId);
+  }
+  return base;
+}
+
+function renderBulkPreview() {
+  const items = bulkItems();
+  const ol = $('#bulk-preview');
+  ol.innerHTML = '';
+  items.slice(0, 3).forEach((v, i) => {
+    ol.appendChild(el('li', null, bulkComputeTitle(v, i, items.length)));
+  });
+  if (items.length > 3) ol.appendChild(el('li', 'muted', `…and ${items.length - 3} more`));
+}
+
+function openBulkRename() {
+  const items = bulkItems();
+  if (!items.length) return;
+  $('#bulk-sub').textContent = `Renaming ${items.length} selected video${items.length > 1 ? 's' : ''}.`;
+  $('#bulk-find').value = '';
+  $('#bulk-replace').value = '';
+  $('#bulk-pattern').value = '';
+  $('#bulk-start').value = '1';
+  renderBulkPreview();
+  $('#bulk-modal').hidden = false;
+  setTimeout(() => $('#bulk-find').focus(), 30);
+}
+
+function closeBulkRename() {
+  $('#bulk-modal').hidden = true;
+}
+
+async function applyBulkRename() {
+  const items = bulkItems();
+  const total = items.length;
+  if (!total) return;
+  const titles = items.map((v, i) => bulkComputeTitle(v, i, total));
+
+  const btn = $('#bulk-apply');
+  btn.disabled = true;
+  btn.textContent = 'Applying…';
+  try {
+    await Promise.all(
+      items.map((v, i) => api('/videos/' + v.id, { method: 'PATCH', body: { title: titles[i] } })),
+    );
+    items.forEach((v, i) => {
+      v.title = titles[i] || null;
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Apply';
+  }
+  closeBulkRename();
+  state.selected.clear();
+  state.selectMode = false;
+  $('#select-toggle').setAttribute('aria-pressed', 'false');
+  renderSeries();
+}
+
+async function bulkMarkWatched() {
+  const items = bulkItems();
+  if (!items.length) return;
+  await Promise.all(
+    items.map((v) => api('/videos/' + v.id, { method: 'PATCH', body: { status: 'done', resumeSeconds: 0 } })),
+  );
+  items.forEach((v) => {
+    v.status = 'done';
+    v.resumeSeconds = 0;
+  });
+  state.selected.clear();
+  renderSeries();
+}
+
+async function bulkDelete() {
+  const items = bulkItems();
+  if (!items.length) return;
+  if (!confirm(`Remove ${items.length} video${items.length > 1 ? 's' : ''} from this series?`)) return;
+  await Promise.all(items.map((v) => api('/videos/' + v.id, { method: 'DELETE' })));
+  const ids = new Set(items.map((v) => v.id));
+  state.videos = state.videos.filter((v) => !ids.has(v.id));
+  state.selected.clear();
+  renderSeries();
 }
 
 // -------------------------------------------------------------------- player
@@ -580,6 +729,24 @@ function wireEvents() {
   document.querySelectorAll('.view-btn').forEach((b) => {
     b.onclick = () => setView(b.dataset.view);
   });
+
+  // selection & bulk actions
+  $('#select-toggle').onclick = () => setSelectMode(!state.selectMode);
+  $('#bulk-clear-btn').onclick = () => {
+    state.selected.clear();
+    renderSeries();
+  };
+  $('#bulk-rename-btn').onclick = () => openBulkRename();
+  $('#bulk-watch-btn').onclick = () => bulkMarkWatched();
+  $('#bulk-delete-btn').onclick = () => bulkDelete();
+  $('#bulk-cancel').onclick = () => closeBulkRename();
+  $('#bulk-apply').onclick = () => applyBulkRename();
+  ['#bulk-find', '#bulk-replace', '#bulk-pattern', '#bulk-start'].forEach((s) =>
+    $(s).addEventListener('input', renderBulkPreview),
+  );
+  $('#bulk-modal').onclick = (e) => {
+    if (e.target === $('#bulk-modal')) closeBulkRename();
+  };
 
   // modal
   $('#modal-save').onclick = () => submitModal();
