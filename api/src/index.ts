@@ -1,7 +1,7 @@
 import type { Env } from './types';
-import { json, fail } from './util';
+import { json, fail, errorMessage } from './util';
 import { getSessionUser, bearer } from './session';
-import { initSchema } from './db';
+import { initSchema, ensureSchema } from './db';
 import * as auth from './auth';
 import * as data from './data';
 
@@ -17,7 +17,7 @@ export default {
       res = await route(request, env);
     } catch (e) {
       console.error(e);
-      res = fail('Internal server error', 500);
+      res = json({ error: 'Internal server error', detail: errorMessage(e) }, 500);
     }
 
     const headers = new Headers(res.headers);
@@ -35,6 +35,10 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (path === '/' || path === '/health') {
     return json({ ok: true, service: 'yt-video-queue-api' });
   }
+
+  // Make sure the database schema exists. This runs once per Worker isolate,
+  // so the first request after a deploy creates any missing tables.
+  await ensureSchema(env);
 
   // --- setup (protected by bootstrap secret) ---
   if (seg[0] === 'admin' && seg[1] === 'init' && method === 'POST') {

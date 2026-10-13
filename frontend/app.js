@@ -50,7 +50,10 @@ async function api(path, opts = {}) {
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status);
+  if (!res.ok) {
+    const msg = data && data.error ? data.error : 'HTTP ' + res.status;
+    throw new Error(data && data.detail ? msg + ': ' + data.detail : msg);
+  }
   return data;
 }
 

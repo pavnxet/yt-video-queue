@@ -85,3 +85,18 @@ export async function initSchema(env: Env): Promise<void> {
     await client.execute(stmt);
   }
 }
+
+// Run the DDL at most once per Worker isolate (the first request after a
+// deploy creates any missing tables). On failure we clear the cache so the
+// next request retries, instead of caching a broken state forever.
+let schemaInitPromise: Promise<void> | null = null;
+
+export function ensureSchema(env: Env): Promise<void> {
+  if (!schemaInitPromise) {
+    schemaInitPromise = initSchema(env).catch((e) => {
+      schemaInitPromise = null;
+      throw e;
+    });
+  }
+  return schemaInitPromise;
+}

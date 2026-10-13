@@ -72,11 +72,13 @@ turso db show yt-video-queue --url          # -> TURSO_DB_URL
 turso db tokens create yt-video-queue       # -> TURSO_DB_AUTH_TOKEN
 ```
 
-You can apply the schema two ways (either is fine):
+You do not have to do anything here — the Worker creates the tables by itself
+the first time it is called. But you can also do it manually if you prefer:
 
+- **Automatic (default):** the Worker runs `CREATE TABLE IF NOT EXISTS ...` once
+  per isolate, so the first request after a deploy sets everything up.
 - **Manually:** `turso db shell yt-video-queue < schema.sql`
-- **From the app:** after deploying, call the init endpoint once (see step 5):
-  `curl -X POST https://<your-worker>/admin/init -H 'content-type: application/json' -d '{"bootstrapSecret":"<BOOTSTRAP_SECRET>"}'`
+- **Or via the API:** `curl -X POST https://<your-worker>/admin/init -H 'content-type: application/json' -d '{"bootstrapSecret":"<BOOTSTRAP_SECRET>"}'`
 
 ### 2. Get your Cloudflare API token
 
