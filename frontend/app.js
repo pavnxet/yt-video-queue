@@ -76,6 +76,42 @@ function el(tag, className, text) {
   return n;
 }
 
+// -------------------------------------------------------------------- theme
+// 'light' | 'dark' | absent (absent = follow the system, like Claude does)
+const THEME_KEY = 'ytq_theme';
+
+function resolveTheme() {
+  const stored = localStorage.getItem(THEME_KEY);
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const btn = $('#theme-toggle');
+  if (btn) {
+    btn.textContent = theme === 'dark' ? '☀' : '☾';
+    btn.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+    btn.setAttribute('aria-label', btn.title);
+  }
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+}
+
+function initTheme() {
+  applyTheme(resolveTheme());
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const onChange = () => {
+    if (!localStorage.getItem(THEME_KEY)) applyTheme(resolveTheme());
+  };
+  if (mq.addEventListener) mq.addEventListener('change', onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+}
+
 // -------------------------------------------------------------------- modal
 let modalSave = null;
 
@@ -103,6 +139,7 @@ async function submitModal() {
 
 // ------------------------------------------------------------------- routing
 async function init() {
+  initTheme();
   wireEvents();
 
   if (!API_BASE_URL || API_BASE_URL.includes('REPLACE_WITH')) {
@@ -159,7 +196,7 @@ async function loadDashboard() {
 }
 
 function seriesCard(s) {
-  const card = el('div', 'card glass series-card');
+  const card = el('div', 'card series-card');
   card.appendChild(el('h3', null, s.title));
   if (s.description) card.appendChild(el('p', 'muted', s.description));
   card.appendChild(el('p', 'muted', `${s.done} / ${s.total} watched`));
@@ -494,6 +531,10 @@ function wireEvents() {
   $('#autoplay-toggle').onchange = (e) => {
     state.autoplay = e.target.checked;
   };
+
+  // theme
+  const themeBtn = $('#theme-toggle');
+  if (themeBtn) themeBtn.onclick = toggleTheme;
 
   // modal
   $('#modal-save').onclick = () => submitModal();
