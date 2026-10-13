@@ -1,0 +1,48 @@
+name: Deploy frontend to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Write frontend/config.js from the repository variable API_BASE_URL.
+      # Set it under: Settings -> Secrets and variables -> Actions -> Variables.
+      - name: Write config.js
+        run: |
+          URL="${{ vars.API_BASE_URL }}"
+          if [ -z "$URL" ]; then URL="https://REPLACE_WITH_YOUR_WORKER_URL"; fi
+          printf 'export const API_BASE_URL = "%s";\n' "$URL" > frontend/config.js
+          echo "config.js -> $URL"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

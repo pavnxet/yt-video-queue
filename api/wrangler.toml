@@ -1,0 +1,29 @@
+# Cloudflare Worker configuration for yt-video-queue
+# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "yt-video-queue-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# --- Public, non-secret configuration -------------------------------------
+# Change RP_ID / EXPECTED_ORIGIN if you move to a custom domain.
+#   GitHub Pages project site -> origin https://<user>.github.io
+#   RP ID must be a registrable-domain suffix of that origin:
+#     pavnxet.github.io  (github.io is a public suffix, so this is valid)
+[vars]
+RP_ID = "pavnxet.github.io"
+RP_NAME = "YT Video Queue"
+EXPECTED_ORIGIN = "https://pavnxet.github.io"
+AUTH_MODE = "owner"
+
+# --- Secrets (DO NOT put values here; set them via `wrangler secret put`
+#     or the Cloudflare dashboard / GitHub Actions secrets) -----------------
+#   TURSO_DB_URL
+#   TURSO_DB_AUTH_TOKEN
+#   BOOTSTRAP_SECRET
+
+# Optional: pin to a custom domain route instead of the default workers.dev URL
+# [[routes]]
+# pattern = "api.example.com"
+# custom_domain = true

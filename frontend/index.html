@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YT Video Queue</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.youtube.com https://www.gstatic.com https://esm.sh; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com https://*.ytimg.com https://*.googleusercontent.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com; connect-src 'self' https:; font-src 'self' data:; base-uri 'self'; form-action 'self'">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>YT&nbsp;Video&nbsp;Queue</h1>
+    <div id="user-bar" hidden>
+      <span id="user-name" class="muted"></span>
+      <button id="logout-btn" class="ghost">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ---------- Login ---------- -->
+    <section id="login-view" class="view" hidden>
+      <div class="panel">
+        <h2>Sign in</h2>
+        <p class="muted">This app is passkey-only. No passwords.</p>
+        <button id="login-btn" class="primary">Sign in with passkey</button>
+
+        <div id="register-block" hidden>
+          <hr>
+          <p class="muted">First-time setup — enrol a passkey for this device.</p>
+          <label class="field">Bootstrap secret
+            <input id="bootstrap-secret" type="password" autocomplete="off" placeholder="from your Cloudflare secret">
+          </label>
+          <button id="register-btn" class="primary">Register this device</button>
+        </div>
+
+        <p id="login-error" class="error"></p>
+      </div>
+    </section>
+
+    <!-- ---------- Dashboard ---------- -->
+    <section id="dashboard-view" class="view" hidden>
+      <h2>Your series</h2>
+      <form id="create-series-form" class="card inline-form">
+        <input id="series-title" placeholder="New series title" required>
+        <input id="series-desc" placeholder="Description (optional)">
+        <button class="primary" type="submit">Add series</button>
+      </form>
+      <div id="series-list" class="grid"></div>
+    </section>
+
+    <!-- ---------- Series ---------- -->
+    <section id="series-view" class="view" hidden>
+      <button id="back-to-dash" class="ghost">&larr; All series</button>
+      <div class="series-head">
+        <h2 id="series-title-heading"></h2>
+        <p id="series-progress" class="muted"></p>
+        <button id="play-btn" class="primary">▶ Play</button>
+      </div>
+      <form id="add-videos-form" class="card">
+        <textarea id="video-links" rows="4" placeholder="Paste YouTube links, one per line (watch, youtu.be, shorts, embed)"></textarea>
+        <button class="primary" type="submit">Add videos</button>
+      </form>
+      <ol id="video-list" class="video-list"></ol>
+    </section>
+
+    <!-- ---------- Player ---------- -->
+    <section id="player-view" class="view" hidden>
+      <button id="back-to-series" class="ghost">&larr; Back to list</button>
+      <div class="player-wrap">
+        <div id="yt-player"></div>
+      </div>
+      <div class="now-playing">
+        <h3 id="now-title"></h3>
+        <p id="now-progress" class="muted"></p>
+      </div>
+      <div class="controls">
+        <button id="prev-btn" class="ghost">◀ Prev</button>
+        <button id="next-btn" class="ghost">Next ▶</button>
+        <label class="toggle"><input id="autoplay-toggle" type="checkbox" checked> Auto-advance</label>
+        <button id="mark-done-btn" class="ghost">Mark done &amp; next</button>
+      </div>
+      <div id="up-next" class="up-next muted"></div>
+    </section>
+  </main>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

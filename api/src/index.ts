@@ -1,0 +1,116 @@
+import type { Env } from './types';
+import { json, fail } from './util';
+import { getSessionUser, bearer } from './session';
+import { initSchema } from './db';
+import * as auth from './auth';
+import * as data from './data';
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const cors = corsHeaders(request, env);
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: cors });
+    }
+
+    let res: Response;
+    try {
+      res = await route(request, env);
+    } catch (e) {
+      console.error(e);
+      res = fail('Internal server error', 500);
+    }
+
+    const headers = new Headers(res.headers);
+    for (const [k, v] of Object.entries(cors)) headers.set(k, v);
+    return new Response(res.body, { status: res.status, headers });
+  },
+} satisfies ExportedHandler<Env>;
+
+async function route(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+  const method = request.method.toUpperCase();
+  const seg = path.split('/').filter(Boolean);
+
+  if (path === '/' || path === '/health') {
+    return json({ ok: true, service: 'yt-video-queue-api' });
+  }
+
+  // --- setup (protected by bootstrap secret) ---
+  if (seg[0] === 'admin' && seg[1] === 'init' && method === 'POST') {
+    return adminInit(request, env);
+  }
+
+  // --- public auth ---
+  if (seg[0] === 'auth') {
+    if (seg[1] === 'status' && seg.length === 2 && method === 'GET') return auth.statusHandler(env);
+    if (seg[1] === 'register' && seg[2] === 'options' && method === 'POST') return auth.registerOptions(request, env);
+    if (seg[1] === 'register' && seg[2] === 'verify' && method === 'POST') return auth.registerVerify(request, env);
+    if (seg[1] === 'login' && seg[2] === 'options' && method === 'POST') return auth.loginOptions(env);
+    if (seg[1] === 'login' && seg[2] === 'verify' && method === 'POST') return auth.loginVerify(request, env);
+    if (seg[1] === 'logout' && seg.length === 2 && method === 'POST') return auth.logout(request, env);
+    if (seg[1] === 'me' && seg.length === 2 && method === 'GET') return auth.me(request, env);
+    return fail('Not found', 404);
+  }
+
+  // --- everything below requires a session ---
+  const user = await getSessionUser(env, bearer(request));
+  if (!user) return fail('Unauthorized', 401);
+
+  if (seg[0] === 'series') {
+    if (seg.length === 1) {
+      if (method === 'GET') return data.listSeries(env, user);
+      if (method === 'POST') return data.createSeries(request, env, user);
+    }
+    if (seg.length === 2) {
+      const id = seg[1];
+      if (method === 'GET') return data.getSeries(env, user, id);
+      if (method === 'PATCH') return data.patchSeries(request, env, user, id);
+      if (method === 'DELETE') return data.deleteSeries(env, user, id);
+    }
+    if (seg.length === 3 && seg[2] === 'videos' && method === 'POST') {
+      return data.addVideos(request, env, user, seg[1]);
+    }
+    if (seg.length === 3 && seg[2] === 'reorder' && method === 'POST') {
+      return data.reorderVideos(request, env, user, seg[1]);
+    }
+  }
+
+  if (seg[0] === 'videos' && seg.length === 2) {
+    const id = seg[1];
+    if (method === 'PATCH') return data.patchVideo(request, env, user, id);
+    if (method === 'DELETE') return data.deleteVideo(env, user, id);
+  }
+
+  return fail('Not found', 404);
+}
+
+async function adminInit(request: Request, env: Env): Promise<Response> {
+  let body: any = {};
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  if (!env.BOOTSTRAP_SECRET || String(body.bootstrapSecret || '') !== env.BOOTSTRAP_SECRET) {
+    return fail('Invalid bootstrap secret.', 403);
+  }
+  await initSchema(env);
+  return json({ ok: true, schemaApplied: true });
+}
+
+function corsHeaders(request: Request, env: Env): Record<string, string> {
+  const allowed = (env.EXPECTED_ORIGIN || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const origin = request.headers.get('Origin') || '';
+  const allow = allowed.includes(origin) ? origin : allowed[0] || '*';
+  return {
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
+  };
+}

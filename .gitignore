@@ -1,0 +1,18 @@
+# --- secrets & local environment (NEVER commit these) ---
+api/.dev.vars
+.dev.vars
+.env
+.env.*
+
+# --- dependencies & build output ---
+node_modules/
+api/node_modules/
+.wrangler/
+dist/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

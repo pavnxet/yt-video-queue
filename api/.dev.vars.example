@@ -1,0 +1,6 @@
+# Copy this file to `api/.dev.vars` for local development with `npm run dev`.
+# `.dev.vars` is git-ignored — never commit real values.
+
+TURSO_DB_URL="libsql://your-db-name-your-org.turso.io"
+TURSO_DB_AUTH_TOKEN="paste-a-turso-token-here"
+BOOTSTRAP_SECRET="choose-a-long-random-string"

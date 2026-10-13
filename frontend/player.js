@@ -1,0 +1,122 @@
+// player.js — thin wrapper around the YouTube IFrame Player API.
+// Detects completion (state ENDED) and reports playback progress.
+
+let apiPromise = null;
+
+/** Resolve once window.YT is available. */
+export function loadYouTubeApi() {
+  if (apiPromise) return apiPromise;
+  apiPromise = new Promise((resolve) => {
+    if (window.YT && window.YT.Player) return resolve(window.YT);
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prev === 'function') prev();
+      resolve(window.YT);
+    };
+  });
+  return apiPromise;
+}
+
+export class QueuePlayer {
+  /**
+   * @param {object} opts
+   * @param {string} opts.elementId   id of the <div> to replace with the iframe
+   * @param {object} opts.handlers    { onEnded, onProgress(seconds, ended), onError }
+   */
+  constructor({ elementId, handlers = {} }) {
+    this.elementId = elementId;
+    this.handlers = handlers;
+    this.player = null;
+    this.YT = null;
+    this.current = null;
+    this._timer = null;
+  }
+
+  async ready() {
+    this.YT = await loadYouTubeApi();
+    if (this.player) return;
+    await new Promise((resolve) => {
+      this.player = new this.YT.Player(this.elementId, {
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          enablejsapi: 1,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: () => resolve(),
+          onStateChange: (e) => this._onState(e),
+          onError: (e) => this.handlers.onError && this.handlers.onError(e),
+        },
+      });
+    });
+  }
+
+  /** Load a video object { youtubeId, resumeSeconds } and start playing. */
+  async load(video) {
+    await this.ready();
+    this.current = video;
+    const start = Math.max(0, Math.floor(video.resumeSeconds || 0));
+    this.player.loadVideoById({ videoId: video.youtubeId, startSeconds: start });
+  }
+
+  _onState(e) {
+    const YT = this.YT;
+    if (e.data === YT.PlayerState.PLAYING) {
+      this._startTimer();
+    } else {
+      this._stopTimer();
+      if (e.data === YT.PlayerState.PAUSED) this._save(false);
+      if (e.data === YT.PlayerState.ENDED) {
+        this._save(true);
+        this.handlers.onEnded && this.handlers.onEnded();
+      }
+    }
+  }
+
+  _startTimer() {
+    this._stopTimer();
+    this._timer = setInterval(() => this._save(false), 5000);
+  }
+
+  _stopTimer() {
+    if (this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+  }
+
+  _save(ended) {
+    if (!this.player || typeof this.player.getCurrentTime !== 'function') return;
+    let t = 0;
+    try {
+      t = Math.floor(this.player.getCurrentTime() || 0);
+    } catch {
+      return;
+    }
+    this.handlers.onProgress && this.handlers.onProgress(t, !!ended);
+  }
+
+  getDuration() {
+    try {
+      return Math.floor(this.player.getDuration() || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  play() {
+    try {
+      this.player.playVideo();
+    } catch {}
+  }
+
+  pause() {
+    try {
+      this.player.pauseVideo();
+    } catch {}
+  }
+}
