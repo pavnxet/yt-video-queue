@@ -21,6 +21,11 @@ only **your** passkey opens it.
   (`t.me/…`) are embedded; any other web link opens in a new tab, because most
   sites refuse to be framed. Titles, thumbnails and site names are read from the
   page automatically.
+- **Tap a title to open it at the source.** In the series list, each title is a
+  link to its original page, so on a phone it hands off to the installed app — a
+  YouTube title opens in the YouTube app, a Telegram title in Telegram, and so
+  on. Private Telegram channels (`t.me/c/…`) cannot be embedded at all, so those
+  go straight to the app instead of showing a broken frame.
 - If a page can't be read — blocked, timed out, no title, a bot wall — the row is
   still named, from the link itself ("t.me · SomeChannel post 123"), and tagged
   **auto** so you know it was guessed and can rename it.
@@ -247,6 +252,9 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.3** — titles in the series list are now links out to their source app
+  (YouTube, Telegram, …); private Telegram channel posts are no longer embedded,
+  and embeddable frames gained an "open in the app" fallback link.
 - **v1.2** — PowerRename-style renaming: search/replace with regular expressions
   and capture groups, match-all, case sensitivity, enumerate counters, date/time
   variables, text formatting, a live preview table with per-item checkboxes and

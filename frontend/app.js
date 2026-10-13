@@ -4,7 +4,7 @@ import { API_BASE_URL } from './config.js';
 import { QueuePlayer } from './player.js';
 import { startRegistration, startAuthentication } from 'https://esm.sh/@simplewebauthn/browser@13';
 
-const VERSION = '1.2';
+const VERSION = '1.3';
 const TOKEN_KEY = 'ytq_token';
 const VIEWS = ['login-view', 'dashboard-view', 'series-view', 'player-view'];
 
@@ -107,6 +107,13 @@ function hostOf(url) {
   } catch {
     return '';
   }
+}
+
+// What to call the button that hands a link over to its own app.
+function openLabel(v) {
+  if (v.source === 'youtube') return 'Open in YouTube';
+  if (v.source === 'telegram') return 'Open in Telegram';
+  return 'Open link';
 }
 
 // neutral tile shown when a page has no thumbnail we can use
@@ -349,7 +356,7 @@ function videoRow(v, index) {
     li.appendChild(pick);
     // tapping anywhere on the row also toggles it (handy on touch)
     li.onclick = (e) => {
-      if (e.target.closest('button, input')) return;
+      if (e.target.closest('button, input, a')) return;
       toggleSelect(v.id, !state.selected.has(v.id));
     };
   }
@@ -368,8 +375,21 @@ function videoRow(v, index) {
   const main = el('div', 'vmain');
   if (index != null) main.appendChild(el('span', 'idx', String(index)));
 
-  const title = el('span', 'vtitle', v.title || v.youtubeId || v.url || 'Untitled');
-  title.title = [v.title, v.url || v.youtubeId].filter(Boolean).join(' · ');
+  const label = v.title || v.youtubeId || v.url || 'Untitled';
+  const link = v.url || (v.youtubeId ? `https://www.youtube.com/watch?v=${v.youtubeId}` : null);
+  let title;
+  if (link && !state.selectMode) {
+    // clicking the title hands the link to the source app (YouTube, Telegram, …)
+    title = document.createElement('a');
+    title.className = 'vtitle link';
+    title.href = link;
+    title.target = '_blank';
+    title.rel = 'noopener noreferrer';
+    title.textContent = label;
+  } else {
+    title = el('span', 'vtitle', label);
+  }
+  title.title = [v.title, link].filter(Boolean).join(' · ');
   main.appendChild(title);
 
   if (v.status === 'watching') main.appendChild(el('span', 'badge', 'watching'));
@@ -1086,20 +1106,25 @@ function pauseYt() {
 
 // three ways to watch: the YouTube player, a generic iframe (Telegram), or an
 // external card for sites that refuse to be framed
-function showPlayerMode(mode, arg) {
+function showPlayerMode(mode, v) {
   const frame = $('#frame-player');
+  const fallback = $('#frame-fallback');
   $('#yt-player').hidden = mode !== 'yt';
   frame.hidden = mode !== 'frame';
   $('#external-player').hidden = mode !== 'external';
 
   if (mode === 'frame') {
-    frame.src = arg;
-  } else if (frame.getAttribute('src')) {
-    frame.removeAttribute('src');
+    frame.src = v.embedUrl || v.url;
+    const open = $('#frame-open');
+    open.href = v.url || '#';
+    open.textContent = openLabel(v) + ' ↗';
+    fallback.hidden = false;
+  } else {
+    if (frame.getAttribute('src')) frame.removeAttribute('src');
+    fallback.hidden = true;
   }
 
   if (mode === 'external') {
-    const v = arg;
     $('#ext-site').textContent = v.siteName || hostOf(v.url) || '';
     $('#ext-title').textContent = v.title || v.url || '';
     const img = $('#ext-image');
@@ -1110,8 +1135,13 @@ function showPlayerMode(mode, arg) {
       img.hidden = true;
       img.removeAttribute('src');
     }
-    $('#ext-open').href = v.url || '#';
-    $('#now-progress').textContent = 'Opens in a new tab — mark it done here when you have finished.';
+    const open = $('#ext-open');
+    open.href = v.url || '#';
+    open.textContent = openLabel(v) + ' ↗';
+    $('#now-progress').textContent =
+      v.source === 'telegram'
+        ? 'Telegram will not show this post inside another app, so it opens in Telegram.'
+        : 'Opens in a new tab — mark it done here when you have finished.';
   }
 }
 
@@ -1132,7 +1162,7 @@ async function playVideo(v) {
   updateUpNext();
 
   if (v.source === 'youtube' && v.youtubeId) {
-    showPlayerMode('yt');
+    showPlayerMode('yt', v);
     try {
       await ensurePlayer();
     } catch {
@@ -1144,7 +1174,7 @@ async function playVideo(v) {
   }
 
   pauseYt();
-  if (v.embeddable && (v.embedUrl || v.url)) showPlayerMode('frame', v.embedUrl || v.url);
+  if (v.embeddable && (v.embedUrl || v.url)) showPlayerMode('frame', v);
   else showPlayerMode('external', v);
 }
 

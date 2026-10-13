@@ -92,6 +92,9 @@ export async function fetchMeta(input: string): Promise<LinkMeta | null> {
   const cleanTitle = cleanText(title);
   const derived = deriveName(c.url);
   const telegram = c.kind === 'telegram';
+  // t.me/c/… are private-channel posts, which Telegram refuses to embed (it
+  // answers "Channel with username @c not found"). Send those to the app.
+  const canEmbed = telegram && !isPrivateTelegram(c.url);
 
   return {
     kind: c.kind,
@@ -100,8 +103,8 @@ export async function fetchMeta(input: string): Promise<LinkMeta | null> {
     title: cleanTitle || derived,
     imageUrl: image,
     siteName: cleanText(site) || hostOf(c.url),
-    embeddable: telegram, // Telegram post embeds allow framing; most sites do not
-    embedUrl: telegram ? withEmbed(c.url) : null,
+    embeddable: canEmbed,
+    embedUrl: canEmbed ? withEmbed(c.url) : null,
     titleAuto: !cleanTitle,
   };
 }
@@ -216,6 +219,17 @@ export function deriveName(url: string): string {
   if (pretty.length > 60) pretty = pretty.slice(0, 60) + '…';
   if (/^\d+$/.test(pretty)) pretty = 'post ' + pretty;
   return pretty ? `${host} · ${pretty}` : host;
+}
+
+// Posts from private channels (/c/…) and invite links (/+…, /joinchat/…) are not
+// embeddable — Telegram answers them with an error instead of a post.
+function isPrivateTelegram(url: string): boolean {
+  try {
+    const p = new URL(url).pathname;
+    return /^\/c\//.test(p) || /^\/joinchat\//i.test(p) || /^\/\+/.test(p);
+  } catch {
+    return false;
+  }
 }
 
 function withEmbed(url: string): string {
