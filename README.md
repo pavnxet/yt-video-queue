@@ -1,13 +1,50 @@
 # YT Video Queue
 
-A personal, passkey-protected watch queue for YouTube.
+**v1.0** — a personal, passkey-protected watch queue for YouTube.
 
-- Add YouTube links into ordered **series**.
-- Watch them **one by one**; the next video is queued automatically when one finishes.
-- Progress (position + watched status) is saved, so you resume anywhere.
-- Login is **passkey-only (WebAuthn)** — no passwords. Single-owner by default:
-  only your passkey opens it.
-- Static UI on **GitHub Pages**, data in **Turso**, a tiny API on **Cloudflare Workers**.
+Add YouTube links into ordered **series**, watch them **one by one**, and have the
+next video queued automatically when one finishes. Progress is saved, so you
+resume anywhere. Login is **passkey-only** (WebAuthn) — no passwords — and by
+default only **your** passkey opens it.
+
+- Static UI on **GitHub Pages**
+- Data in **Turso** (libSQL)
+- A tiny API on **Cloudflare Workers** that holds the secrets and verifies passkeys
+
+---
+
+## Features
+
+**Watching**
+- Ordered series of YouTube links; the player walks the queue and auto-advances
+  when a video ends.
+- Resume where you left off — playback position is saved every few seconds.
+- `Prev` / `Next`, and a **Mark done & next** button that always advances.
+- **Auto-advance** toggle.
+- Watched videos are kept in a collapsed **Watched (n)** section rather than
+  being lost; replay, un-watch, rename or delete any of them.
+
+**Organising**
+- **Rename** any video or series.
+- **Multi-select** (the *Select* button) with **Bulk rename**, **Mark watched**,
+  **Delete** and **Clear**.
+- Bulk rename supports find & replace and a title pattern with `{n}`, `{1}`,
+  `{n:2}` (zero-padded), `{title}`, `{id}` and `{total}`, with a live preview.
+- Reorder with ↑ / ↓.
+
+**Exporting a series as a playlist**
+- **Open as YouTube playlist** — opens a temporary YouTube playlist of the series.
+- **Copy links**, or download **.txt**, **.csv** or **.json**.
+- Choose the scope: **all videos (watched + unwatched)**, unwatched only, or
+  watched only.
+
+**Look & feel**
+- Claude-style warm theme: cream canvas, warm near-black dark mode, a single
+  clay accent and serif headings. Light/dark/system toggle.
+- **View modes** like Windows Explorer: thumbnail **grid**, **compact** rows with
+  thumbnails, or a plain **list**.
+- Real YouTube **thumbnails** on every row.
+- Responsive for phone, tablet and desktop.
 
 ---
 
@@ -17,21 +54,21 @@ A personal, passkey-protected watch queue for YouTube.
 GitHub Pages (static: index.html, app.js, player.js)
         |  fetch() with Authorization: Bearer <session token>
         v
-Cloudflare Worker  (holds Turso token + WebAuthn verification)
+Cloudflare Worker  (holds the Turso token; verifies passkeys)
         |  @libsql/client/web over HTTPS
         v
 Turso (libSQL)
 ```
 
 GitHub Pages cannot keep secrets or verify WebAuthn signatures, so a small
-serverless API is required. The API holds the Turso token and runs the passkey
-verification; the browser only ever sees a session token.
+serverless API is required. The browser only ever sees a short-lived session
+token.
 
 ```
 yt-video-queue/
 ├─ frontend/                 # published to GitHub Pages
 │  ├─ index.html
-│  ├─ app.js                 # SPA controller (auth, dashboard, series)
+│  ├─ app.js                 # SPA controller (auth, series, player, export)
 │  ├─ player.js              # YouTube IFrame player + completion detection
 │  ├─ styles.css
 │  └─ config.js             # API_BASE_URL (written at deploy time)
@@ -40,23 +77,13 @@ yt-video-queue/
 │  ├─ src/auth.ts            # WebAuthn register/login + sessions
 │  ├─ src/data.ts            # series + videos CRUD
 │  ├─ src/session.ts         # opaque DB-backed sessions
-│  ├─ src/db.ts              # libSQL client + schema DDL
-│  ├─ src/util.ts
-│  ├─ src/types.ts
+│  ├─ src/db.ts              # libSQL client + schema (auto-created)
+│  ├─ src/util.ts · types.ts
 │  ├─ wrangler.toml
 │  └─ package.json
 ├─ schema.sql
 └─ .github/workflows/        # deploy-pages.yml + deploy-api.yml
 ```
-
----
-
-## Prerequisites
-
-- A **GitHub** account (this repo).
-- A free **Turso** account — https://turso.tech
-- A free **Cloudflare** account — https://dash.cloudflare.com
-- Node.js 20+ if you want to run the API locally.
 
 ---
 
@@ -72,71 +99,53 @@ turso db show yt-video-queue --url          # -> TURSO_DB_URL
 turso db tokens create yt-video-queue       # -> TURSO_DB_AUTH_TOKEN
 ```
 
-You do not have to do anything here — the Worker creates the tables by itself
-the first time it is called. But you can also do it manually if you prefer:
+You do **not** need to create the tables by hand — the Worker creates them the
+first time it is called. (You can also run `turso db shell yt-video-queue < schema.sql`
+or `POST /admin/init` if you prefer.)
 
-- **Automatic (default):** the Worker runs `CREATE TABLE IF NOT EXISTS ...` once
-  per isolate, so the first request after a deploy sets everything up.
-- **Manually:** `turso db shell yt-video-queue < schema.sql`
-- **Or via the API:** `curl -X POST https://<your-worker>/admin/init -H 'content-type: application/json' -d '{"bootstrapSecret":"<BOOTSTRAP_SECRET>"}'`
-
-### 2. Get your Cloudflare API token
+### 2. Get a Cloudflare API token
 
 Dashboard → My Profile → API Tokens → Create Token → template
-**"Edit Cloudflare Workers"**. Note your **Account ID** (Workers overview page).
+**"Edit Cloudflare Workers"**. Note your **Account ID** from Workers & Pages →
+Account details.
 
-### 3. Set GitHub repository secrets and variables
+### 3. Set GitHub secrets and variables
 
 Settings → **Secrets and variables** → **Actions**.
 
-Secrets (Repository secrets):
+Repository **secrets**: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+`TURSO_DB_URL`, `TURSO_DB_AUTH_TOKEN`, `BOOTSTRAP_SECRET` (a long random string
+you choose; used once, for the first enrolment).
 
-| Name | Value |
-|------|-------|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token from step 2 |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
-| `TURSO_DB_URL` | from step 1 |
-| `TURSO_DB_AUTH_TOKEN` | from step 1 |
-| `BOOTSTRAP_SECRET` | a long random string you choose (used once, for first enrolment) |
-
-Variables (Repository **variables**):
-
-| Name | Value |
-|------|-------|
-| `API_BASE_URL` | your Worker URL, e.g. `https://yt-video-queue-api.<your-subdomain>.workers.dev` |
+Repository **variables**: `API_BASE_URL` = your Worker URL, e.g.
+`https://yt-video-queue-api.<your-subdomain>.workers.dev`.
 
 > `API_BASE_URL` is public, so it is a **variable**, not a secret. It is injected
 > into `frontend/config.js` at deploy time.
 
 ### 4. Deploy
 
-- Push to `main` (or run the workflows manually from the Actions tab).
-- `Deploy API to Cloudflare Workers` publishes the Worker and sets its secrets.
-- `Deploy frontend to GitHub Pages` publishes `frontend/`.
-
-Then, in repo **Settings → Pages**, set **Source = GitHub Actions** (first time only).
+Push to `main` (or run the two workflows from the Actions tab). Then set
+repo **Settings → Pages → Source = GitHub Actions** (first time only).
 
 Your site will be at `https://<user>.github.io/yt-video-queue/`.
 
 ### 5. First login
 
 1. Open the site. Since no passkey exists yet, the **Register this device** box appears.
-2. Enter your `BOOTSTRAP_SECRET`, click **Register this device**, and create a
-   passkey with Face ID / Touch ID / Windows Hello / PIN.
-3. Registration now closes automatically — only that passkey can sign in.
-4. **Enrol a second passkey** (e.g. your laptop) for safety: temporarily set the
-   config flag `allow_reenroll = '1'` in the DB (`INSERT INTO app_config ...`),
-   register again, then set it back to `'0'`. Or run with `AUTH_MODE=multi` while
-   adding devices.
+2. Enter your `BOOTSTRAP_SECRET` and create a passkey with Face ID / Touch ID /
+   Windows Hello / PIN. Registration then closes automatically.
+3. **Enrol a second passkey** (a second device) so a lost phone is not a lockout:
+   set `allow_reenroll = '1'` in `app_config`, register again, then set it back to `'0'`.
 
 ---
 
-## Deploying the Worker manually (alternative to Actions)
+## Deploying the Worker manually (no Cloudflare token needed)
 
 ```bash
 cd api
 npm install
-npx wrangler login
+npx wrangler login            # browser approval instead of a token
 npx wrangler secret put TURSO_DB_URL
 npx wrangler secret put TURSO_DB_AUTH_TOKEN
 npx wrangler secret put BOOTSTRAP_SECRET
@@ -156,75 +165,44 @@ npm install
 npm run dev                          # http://localhost:8787
 ```
 
-Serve the frontend with any static server, e.g.:
-
-```bash
-cd frontend
-python3 -m http.server 8000          # http://localhost:8000
-```
-
-Point `frontend/config.js` at `http://localhost:8787` while developing.
-WebAuthn works on `http://localhost` (it counts as a secure context), so you can
-test passkeys locally without TLS. When running locally, set `RP_ID =
-"localhost"` and `EXPECTED_ORIGIN = "http://localhost:8000"` in `wrangler.toml`
-(or via `[env.dev]`).
+Serve the frontend with any static server, point `frontend/config.js` at
+`http://localhost:8787`, and set `RP_ID = "localhost"` /
+`EXPECTED_ORIGIN = "http://localhost:8000"` in `wrangler.toml`. WebAuthn works on
+`http://localhost` (it counts as a secure context).
 
 ---
 
-## Configuration notes
+## Notes
 
-- **RP ID / origin.** Passkeys are bound to the domain. This repo is configured
-  for a GitHub Pages **project site**, so `RP_ID = "pavnxet.github.io"` and
-  `EXPECTED_ORIGIN = "https://pavnxet.github.io"`. If you use a custom domain,
-  update both in `api/wrangler.toml`. Changing the domain later invalidates
-  existing passkeys (you would re-enrol).
-- **Single-owner mode.** `AUTH_MODE = "owner"` (default). One user, registration
-  locked after the first passkey. Set `AUTH_MODE = "multi"` to allow multiple
-  users later (schema already supports it).
+- **RP ID / origin.** This repo is configured for a GitHub Pages **project site**:
+  `RP_ID = "pavnxet.github.io"`, `EXPECTED_ORIGIN = "https://pavnxet.github.io"`.
+  Passkeys are bound to the domain — if you move to a custom domain, update both
+  in `api/wrangler.toml`, and re-enrol your passkeys.
+- **Single-owner mode** (`AUTH_MODE = "owner"`). One user; registration locked
+  after the first passkey. The schema already supports multi-user.
 - **Sessions.** Opaque random tokens; only their SHA-256 hash is stored in the
   `sessions` table. The raw token lives in the browser's `localStorage` and is
-  sent as `Authorization: Bearer`. Log out clears it. Sessions last 30 days.
-
----
-
-## API reference
-
-Public:
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/health` | liveness |
-| `POST` | `/admin/init` | apply schema (needs bootstrap secret) |
-| `GET` | `/auth/status` | is registration open? |
-| `POST` | `/auth/register/options` · `/auth/register/verify` | enrol a passkey |
-| `POST` | `/auth/login/options` · `/auth/login/verify` | sign in |
-
-Authenticated (Bearer token):
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/auth/me` | current user |
-| `POST` | `/auth/logout` | end session |
-| `GET`/`POST` | `/series` | list / create series |
-| `GET`/`PATCH`/`DELETE` | `/series/:id` | read / update / delete |
-| `POST` | `/series/:id/videos` | add video(s) from URLs |
-| `POST` | `/series/:id/reorder` | set order `{orderedIds:[...]}` |
-| `PATCH`/`DELETE` | `/videos/:id` | update status/position, or delete |
+  sent as `Authorization: Bearer`. Sessions last 30 days.
+- **Thumbnails** come from `i.ytimg.com` (no API key). Titles are filled in from
+  YouTube's public oEmbed endpoint when a video is added.
 
 ---
 
 ## Security
 
-- Turso token and bootstrap secret live only as Worker secrets — never in the
+- The Turso token and bootstrap secret live only as Worker secrets — never in the
   repo or the browser.
 - Parameterised SQL everywhere; ownership is checked on every series/video access.
 - WebAuthn challenges are stored server-side and deleted after a single use
   (anti-replay); the signature counter is tracked (clone detection).
-- CORS is locked to `EXPECTED_ORIGIN`.
-- A Content-Security-Policy meta tag restricts scripts to self + YouTube + esm.sh.
+- CORS is locked to `EXPECTED_ORIGIN`; a Content-Security-Policy meta tag
+  restricts scripts, frames and images.
+- All rendered text goes through `textContent`, so titles cannot inject HTML.
+- Known gaps for a personal deployment: no rate limiting on the auth endpoints,
+  and the session token is kept in `localStorage` (fine for a single-owner app,
+  but it is readable by any script on the page — the CSP is what protects it).
 
-Never commit `api/.dev.vars` or any real credential — `.gitignore` already
-excludes it.
+Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it.
 
 ---
 
@@ -234,7 +212,16 @@ excludes it.
   re-run the Pages workflow (or edit `frontend/config.js`).
 - **Passkey prompt doesn't appear / fails** — make sure you are on `https://` (or
   `localhost`) and that `RP_ID` matches the site's domain.
-- **`/auth/status` errors** — the Worker isn't deployed yet, or secrets are
-  missing; check the Actions run for the API workflow.
-- **Video won't auto-play next** — browsers may block autoplay; click **Next ▶**
-  or use **Mark done & next**.
+- **A video won't play** — it may be private, removed or region-blocked; press
+  **Next** to skip.
+- **Export button opens a broken YouTube page** — YouTube's temporary playlist
+  holds about 50 videos; use the `.txt` / `.csv` / `.json` downloads for the rest.
+
+---
+
+## Version history
+
+- **v1.0** — first complete release: passkey auth, series and video management,
+  auto-advancing queue with resume, watched section, rename + bulk rename,
+  thumbnail grid / compact / list views, playlist export, Claude-style theme,
+  light/dark toggle, mobile + tablet layout.

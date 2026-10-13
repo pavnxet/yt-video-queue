@@ -6,13 +6,20 @@ let apiPromise = null;
 /** Resolve once window.YT is available. */
 export function loadYouTubeApi() {
   if (apiPromise) return apiPromise;
-  apiPromise = new Promise((resolve) => {
+  apiPromise = new Promise((resolve, reject) => {
     if (window.YT && window.YT.Player) return resolve(window.YT);
     const prev = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
       if (typeof prev === 'function') prev();
       resolve(window.YT);
     };
+    // never hang forever if the player script fails to load
+    setTimeout(() => {
+      if (!(window.YT && window.YT.Player)) reject(new Error('YouTube player failed to load'));
+    }, 12000);
+  }).catch((e) => {
+    apiPromise = null; // allow a retry on the next attempt
+    throw e;
   });
   return apiPromise;
 }

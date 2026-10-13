@@ -69,6 +69,7 @@
           <button type="button" class="view-btn" data-view="list" title="Text list" aria-label="List view">☰</button>
         </div>
         <button id="select-toggle" class="ghost" type="button" aria-pressed="false">Select</button>
+        <button id="export-btn" class="ghost" type="button">Export</button>
       </div>
 
       <div id="selection-bar" class="selection-bar card" hidden>
@@ -156,6 +157,39 @@
       </div>
     </div>
   </div>
+
+  <!-- ---------- Export modal ---------- -->
+  <div id="export-modal" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <h3 id="export-title">Export playlist</h3>
+      <p class="muted" id="export-sub"></p>
+      <label class="field">Include
+        <select id="export-scope">
+          <option value="all">All videos (watched + unwatched)</option>
+          <option value="queue">Unwatched only (the queue)</option>
+          <option value="watched">Watched only</option>
+        </select>
+      </label>
+      <p class="hint" id="export-count"></p>
+      <div class="export-actions">
+        <button id="export-open" class="primary" type="button">Open as YouTube playlist</button>
+        <button id="export-copy" class="ghost" type="button">Copy links</button>
+        <button id="export-txt" class="ghost" type="button">Download .txt</button>
+        <button id="export-csv" class="ghost" type="button">Download .csv</button>
+        <button id="export-json" class="ghost" type="button">Download .json</button>
+      </div>
+      <p class="hint" id="export-note"></p>
+      <div class="modal-actions">
+        <button id="export-close" class="ghost" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <footer class="foot">
+    <span class="muted">YT Video Queue <span id="app-version"></span></span>
+  </footer>
 
   <script src="https://www.youtube.com/iframe_api"></script>
   <script type="module" src="./app.js"></script>
