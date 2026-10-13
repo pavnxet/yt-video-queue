@@ -57,6 +57,50 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// -------------------------------------------------------------- small helpers
+function iconBtn(label, title, onClick) {
+  const b = document.createElement('button');
+  b.className = 'icon-btn';
+  b.type = 'button';
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.textContent = label;
+  b.onclick = onClick;
+  return b;
+}
+
+function el(tag, className, text) {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+// -------------------------------------------------------------------- modal
+let modalSave = null;
+
+function openModal({ heading, value, placeholder, onSave }) {
+  $('#modal-title').textContent = heading;
+  const input = $('#modal-input');
+  input.value = value || '';
+  input.placeholder = placeholder || '';
+  modalSave = onSave;
+  $('#modal').hidden = false;
+  setTimeout(() => input.focus(), 30);
+}
+
+function closeModal() {
+  $('#modal').hidden = true;
+  modalSave = null;
+}
+
+async function submitModal() {
+  const save = modalSave;
+  const value = $('#modal-input').value;
+  closeModal();
+  if (save) await save(value);
+}
+
 // ------------------------------------------------------------------- routing
 async function init() {
   wireEvents();
@@ -72,7 +116,6 @@ async function init() {
   try {
     status = await api('/auth/status');
   } catch (e) {
-    // status endpoint failing usually means the API isn't reachable yet
     console.warn('status check failed', e);
   }
   $('#register-block').hidden = !status.registrationOpen;
@@ -106,57 +149,37 @@ async function loadDashboard() {
     if (e instanceof AuthError) return show('login-view');
     throw e;
   }
-  const el = $('#series-list');
-  el.innerHTML = '';
+  const list = $('#series-list');
+  list.innerHTML = '';
   if (!state.series.length) {
-    const p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = 'No series yet. Create one above.';
-    el.appendChild(p);
+    list.appendChild(el('p', 'muted', 'No series yet. Create one above.'));
     return;
   }
-  for (const s of state.series) {
-    const card = document.createElement('div');
-    card.className = 'card series-card';
+  for (const s of state.series) list.appendChild(seriesCard(s));
+}
 
-    const h = document.createElement('h3');
-    h.textContent = s.title;
-    card.appendChild(h);
+function seriesCard(s) {
+  const card = el('div', 'card glass series-card');
+  card.appendChild(el('h3', null, s.title));
+  if (s.description) card.appendChild(el('p', 'muted', s.description));
+  card.appendChild(el('p', 'muted', `${s.done} / ${s.total} watched`));
 
-    if (s.description) {
-      const d = document.createElement('p');
-      d.className = 'muted';
-      d.textContent = s.description;
-      card.appendChild(d);
-    }
+  const row = el('div', 'row-buttons');
 
-    const prog = document.createElement('p');
-    prog.className = 'muted';
-    prog.textContent = `${s.done} / ${s.total} watched`;
-    card.appendChild(prog);
+  const open = el('button', 'primary', 'Open');
+  open.onclick = () => openSeries(s.id);
+  row.appendChild(open);
 
-    const row = document.createElement('div');
-    row.className = 'row-buttons';
+  const del = el('button', 'ghost', 'Delete');
+  del.onclick = async () => {
+    if (!confirm(`Delete "${s.title}" and all its videos?`)) return;
+    await api('/series/' + s.id, { method: 'DELETE' });
+    loadDashboard();
+  };
+  row.appendChild(del);
 
-    const open = document.createElement('button');
-    open.className = 'primary';
-    open.textContent = 'Open';
-    open.onclick = () => openSeries(s.id);
-    row.appendChild(open);
-
-    const del = document.createElement('button');
-    del.className = 'ghost';
-    del.textContent = 'Delete';
-    del.onclick = async () => {
-      if (!confirm(`Delete "${s.title}" and all its videos?`)) return;
-      await api('/series/' + s.id, { method: 'DELETE' });
-      loadDashboard();
-    };
-    row.appendChild(del);
-
-    card.appendChild(row);
-    el.appendChild(card);
-  }
+  card.appendChild(row);
+  return card;
 }
 
 // -------------------------------------------------------------------- series
@@ -168,75 +191,83 @@ async function openSeries(id) {
   renderSeries();
 }
 
+function activeVideos() {
+  return state.videos.filter((v) => v.status !== 'done');
+}
+
 function renderSeries() {
   $('#series-title-heading').textContent = state.currentSeries.title;
   const done = state.videos.filter((v) => v.status === 'done').length;
   $('#series-progress').textContent = `${done} / ${state.videos.length} watched`;
 
+  const active = activeVideos();
+  const watched = state.videos.filter((v) => v.status === 'done');
+
   const ol = $('#video-list');
   ol.innerHTML = '';
+  if (!active.length) {
+    ol.appendChild(
+      el('li', 'empty', state.videos.length ? 'All caught up — nothing queued.' : 'No videos yet. Paste some links above.'),
+    );
+  }
+  active.forEach((v, i) => ol.appendChild(videoRow(v, i + 1)));
 
-  state.videos.forEach((v, i) => {
-    const li = document.createElement('li');
-    li.className = 'video-item status-' + v.status;
-
-    const idx = document.createElement('span');
-    idx.className = 'idx';
-    idx.textContent = String(i + 1);
-
-    const title = document.createElement('span');
-    title.className = 'vtitle';
-    title.textContent = v.title || v.youtubeId;
-
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = v.status;
-
-    const play = document.createElement('button');
-    play.className = 'ghost';
-    play.title = 'Play';
-    play.textContent = '▶';
-    play.onclick = () => openPlayer(v.id);
-
-    const up = document.createElement('button');
-    up.className = 'ghost';
-    up.title = 'Move up';
-    up.textContent = '↑';
-    up.onclick = () => moveVideo(i, -1);
-
-    const down = document.createElement('button');
-    down.className = 'ghost';
-    down.title = 'Move down';
-    down.textContent = '↓';
-    down.onclick = () => moveVideo(i, 1);
-
-    const mark = document.createElement('button');
-    mark.className = 'ghost';
-    mark.title = v.status === 'done' ? 'Mark as not watched' : 'Mark as watched';
-    mark.textContent = v.status === 'done' ? '↺' : '✓';
-    mark.onclick = () => toggleDone(v);
-
-    const del = document.createElement('button');
-    del.className = 'ghost';
-    del.title = 'Delete';
-    del.textContent = '✕';
-    del.onclick = () => removeVideo(v.id);
-
-    li.append(idx, title, badge, play, up, down, mark, del);
-    ol.appendChild(li);
-  });
+  const wl = $('#watched-list');
+  wl.innerHTML = '';
+  watched.forEach((v) => wl.appendChild(videoRow(v, null)));
+  $('#watched-summary').textContent = `Watched (${watched.length})`;
+  $('#watched-section').hidden = watched.length === 0;
 }
 
-async function moveVideo(i, dir) {
-  const j = i + dir;
-  if (j < 0 || j >= state.videos.length) return;
-  const arr = state.videos.slice();
-  [arr[i], arr[j]] = [arr[j], arr[i]];
-  state.videos = arr;
+function videoRow(v, index) {
+  const li = el('li', 'video-item status-' + v.status);
+
+  if (index != null) li.appendChild(el('span', 'idx', String(index)));
+
+  const title = el('span', 'vtitle', v.title || v.youtubeId);
+  title.title = v.title ? `${v.title} · ${v.youtubeId}` : v.youtubeId;
+  li.appendChild(title);
+
+  if (v.status === 'watching') li.appendChild(el('span', 'badge', 'watching'));
+
+  const actions = el('div', 'row-actions');
+  actions.appendChild(iconBtn('▶', 'Play', () => openPlayer(v.id)));
+  actions.appendChild(iconBtn('✎', 'Rename', () => renameVideo(v)));
+
+  if (index != null) {
+    actions.appendChild(iconBtn('↑', 'Move up', () => moveVideo(v.id, -1)));
+    actions.appendChild(iconBtn('↓', 'Move down', () => moveVideo(v.id, 1)));
+  }
+
+  actions.appendChild(
+    iconBtn(
+      v.status === 'done' ? '↺' : '✓',
+      v.status === 'done' ? 'Mark as not watched' : 'Mark as watched',
+      () => toggleDone(v),
+    ),
+  );
+  actions.appendChild(iconBtn('✕', 'Delete', () => removeVideo(v.id)));
+
+  li.appendChild(actions);
+  return li;
+}
+
+async function moveVideo(id, dir) {
+  const active = activeVideos();
+  const ai = active.findIndex((v) => v.id === id);
+  const aj = ai + dir;
+  if (ai < 0 || aj < 0 || aj >= active.length) return;
+
+  const full = state.videos.slice();
+  const i1 = full.findIndex((v) => v.id === active[ai].id);
+  const i2 = full.findIndex((v) => v.id === active[aj].id);
+  [full[i1], full[i2]] = [full[i2], full[i1]];
+  state.videos = full;
+
   renderSeries();
   await api('/series/' + state.currentSeries.id + '/reorder', {
     method: 'POST',
-    body: { orderedIds: arr.map((v) => v.id) },
+    body: { orderedIds: full.map((v) => v.id) },
   });
 }
 
@@ -252,6 +283,37 @@ async function removeVideo(id) {
   await api('/videos/' + id, { method: 'DELETE' });
   state.videos = state.videos.filter((v) => v.id !== id);
   renderSeries();
+}
+
+function renameVideo(v) {
+  openModal({
+    heading: 'Rename video',
+    value: v.title || '',
+    placeholder: v.youtubeId,
+    onSave: async (value) => {
+      const title = value.trim();
+      await api('/videos/' + v.id, { method: 'PATCH', body: { title } });
+      v.title = title || null;
+      renderSeries();
+    },
+  });
+}
+
+function renameSeries() {
+  const s = state.currentSeries;
+  if (!s) return;
+  openModal({
+    heading: 'Rename series',
+    value: s.title,
+    placeholder: 'Series title',
+    onSave: async (value) => {
+      const title = value.trim();
+      if (!title) return;
+      await api('/series/' + s.id, { method: 'PATCH', body: { title } });
+      s.title = title;
+      renderSeries();
+    },
+  });
 }
 
 // -------------------------------------------------------------------- player
@@ -274,12 +336,17 @@ function currentVideo() {
 }
 
 function nextAfter(video) {
-  if (!video) return state.videos.find((x) => x.status !== 'done') || null;
-  const i = state.videos.findIndex((x) => x.id === video.id);
-  for (let k = i + 1; k < state.videos.length; k++) {
-    if (state.videos[k].status !== 'done') return state.videos[k];
-  }
-  return null;
+  const list = activeVideos();
+  if (!video) return list[0] || null;
+  const i = list.findIndex((x) => x.id === video.id);
+  if (i === -1) return list[0] || null;
+  return list[i + 1] || null;
+}
+
+function prevBefore(video) {
+  const list = activeVideos();
+  const i = list.findIndex((x) => x.id === (video && video.id));
+  return i > 0 ? list[i - 1] : null;
 }
 
 async function openPlayer(videoId) {
@@ -293,6 +360,9 @@ async function openPlayer(videoId) {
 async function playVideo(v) {
   state.currentVideoId = v.id;
   $('#now-title').textContent = v.title || v.youtubeId;
+  const list = activeVideos();
+  const i = list.findIndex((x) => x.id === v.id);
+  $('#now-progress').textContent = i === -1 ? '' : `${i + 1} of ${list.length}`;
   updateUpNext();
   await player.load(v);
 }
@@ -332,9 +402,8 @@ async function onVideoEnded() {
 }
 
 async function goPrev() {
-  const v = currentVideo();
-  const i = state.videos.findIndex((x) => x.id === (v && v.id));
-  if (i > 0) await playVideo(state.videos[i - 1]);
+  const p = prevBefore(currentVideo());
+  if (p) await playVideo(p);
 }
 
 async function goNext() {
@@ -350,10 +419,7 @@ function wireEvents() {
     try {
       const { ceremonyId, options } = await api('/auth/login/options', { method: 'POST' });
       const assertion = await startAuthentication({ optionsJSON: options });
-      const result = await api('/auth/login/verify', {
-        method: 'POST',
-        body: { ceremonyId, response: assertion },
-      });
+      const result = await api('/auth/login/verify', { method: 'POST', body: { ceremonyId, response: assertion } });
       setToken(result.token);
       state.user = result.user;
       enterApp();
@@ -372,10 +438,7 @@ function wireEvents() {
         body: { bootstrapSecret },
       });
       const attestation = await startRegistration({ optionsJSON: options });
-      const result = await api('/auth/register/verify', {
-        method: 'POST',
-        body: { ceremonyId, response: attestation },
-      });
+      const result = await api('/auth/register/verify', { method: 'POST', body: { ceremonyId, response: attestation } });
       setToken(result.token);
       state.user = result.user;
       enterApp();
@@ -396,10 +459,7 @@ function wireEvents() {
     e.preventDefault();
     const title = $('#series-title').value.trim();
     if (!title) return;
-    await api('/series', {
-      method: 'POST',
-      body: { title, description: $('#series-desc').value.trim() },
-    });
+    await api('/series', { method: 'POST', body: { title, description: $('#series-desc').value.trim() } });
     $('#series-title').value = '';
     $('#series-desc').value = '';
     loadDashboard();
@@ -409,13 +469,12 @@ function wireEvents() {
     e.preventDefault();
     const urls = $('#video-links').value.trim();
     if (!urls) return;
-    await api('/series/' + state.currentSeries.id + '/videos', {
-      method: 'POST',
-      body: { urls },
-    });
+    await api('/series/' + state.currentSeries.id + '/videos', { method: 'POST', body: { urls } });
     $('#video-links').value = '';
     openSeries(state.currentSeries.id);
   };
+
+  $('#rename-series-btn').onclick = () => renameSeries();
 
   $('#back-to-dash').onclick = () => loadDashboard();
   $('#back-to-series').onclick = () => {
@@ -424,7 +483,8 @@ function wireEvents() {
   };
 
   $('#play-btn').onclick = () => {
-    const v = state.videos.find((x) => x.status !== 'done') || state.videos[0];
+    const list = activeVideos();
+    const v = list[0] || state.videos[0];
     if (v) openPlayer(v.id);
   };
 
@@ -434,6 +494,24 @@ function wireEvents() {
   $('#autoplay-toggle').onchange = (e) => {
     state.autoplay = e.target.checked;
   };
+
+  // modal
+  $('#modal-save').onclick = () => submitModal();
+  $('#modal-cancel').onclick = () => closeModal();
+  $('#modal').onclick = (e) => {
+    if (e.target === $('#modal')) closeModal();
+  };
+  $('#modal-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitModal();
+    } else if (e.key === 'Escape') {
+      closeModal();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#modal').hidden) closeModal();
+  });
 }
 
 init();
