@@ -1,6 +1,6 @@
 # YT Video Queue
 
-**v1.1** — a personal, passkey-protected watch queue for YouTube, Telegram and
+**v1.3** — a personal, passkey-protected watch queue for YouTube, Telegram and
 any other web video link.
 
 Add links into ordered **series**, watch them **one by one**, and have the next
@@ -66,7 +66,8 @@ only **your** passkey opens it.
   clay accent and serif headings. Light/dark/system toggle.
 - **View modes** like Windows Explorer: thumbnail **grid**, **compact** rows with
   thumbnails, or a plain **list**.
-- Real YouTube **thumbnails** on every row.
+- Real **thumbnails** on every row — the page's `og:image`, or the YouTube
+  still, or a neutral tile.
 - Responsive for phone, tablet and desktop.
 
 ---
@@ -99,6 +100,7 @@ yt-video-queue/
 │  ├─ src/index.ts           # router + CORS
 │  ├─ src/auth.ts            # WebAuthn register/login + sessions
 │  ├─ src/data.ts            # series + videos CRUD
+│  ├─ src/meta.ts            # link classification, title/thumbnail lookup
 │  ├─ src/session.ts         # opaque DB-backed sessions
 │  ├─ src/db.ts              # libSQL client + schema (auto-created)
 │  ├─ src/util.ts · types.ts
@@ -214,8 +216,10 @@ Serve the frontend with any static server, point `frontend/config.js` at
   to the page you pasted.
 - **Adding many links.** Each link costs one metadata lookup, so the frontend
   sends them in batches of 20. Links it cannot recognise are skipped and counted.
-- **Not embeddable on purpose.** Only YouTube and Telegram are framed; the CSP
-  `frame-src` is kept narrow rather than opened to every host.
+- **Not embeddable on purpose.** Only YouTube and public Telegram posts are
+  framed — private Telegram channels (`t.me/c/…`) and invite links are sent to
+  the app instead. The CSP `frame-src` is kept narrow rather than opened to
+  every host.
 
 ---
 
@@ -244,7 +248,11 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 - **Passkey prompt doesn't appear / fails** — make sure you are on `https://` (or
   `localhost`) and that `RP_ID` matches the site's domain.
 - **A video won't play** — it may be private, removed or region-blocked; press
-  **Next** to skip.
+  **Next** to skip, or tap the title to open it at the source.
+- **"Channel with username @c not found" in the player** — that is Telegram
+  refusing to embed a private-channel post. Those links are detected and open in
+  the Telegram app instead; if you still see it, the link was added before v1.3,
+  so remove and re-add it.
 - **Export button opens a broken YouTube page** — YouTube's temporary playlist
   holds about 50 videos; use the `.txt` / `.csv` / `.json` downloads for the rest.
 
