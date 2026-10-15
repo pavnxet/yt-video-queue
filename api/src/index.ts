@@ -47,7 +47,7 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   // --- public auth ---
   if (seg[0] === 'auth') {
-    if (seg[1] === 'status' && seg.length === 2 && method === 'GET') return auth.statusHandler(env);
+    if (seg[1] === 'status' && seg.length === 2 && method === 'GET') return auth.statusHandler(request, env);
     if (seg[1] === 'register' && seg[2] === 'options' && method === 'POST') return auth.registerOptions(request, env);
     if (seg[1] === 'register' && seg[2] === 'verify' && method === 'POST') return auth.registerVerify(request, env);
     if (seg[1] === 'login' && seg[2] === 'options' && method === 'POST') return auth.loginOptions(env);

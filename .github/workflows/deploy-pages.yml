@@ -25,12 +25,22 @@ jobs:
 
       # Write frontend/config.js from the repository variable API_BASE_URL.
       # Set it under: Settings -> Secrets and variables -> Actions -> Variables.
-      - name: Write config.js
+      - name: Write config.js and preconnect
         run: |
           URL="${{ vars.API_BASE_URL }}"
           if [ -z "$URL" ]; then URL="https://REPLACE_WITH_YOUR_WORKER_URL"; fi
           printf 'export const API_BASE_URL = "%s";\n' "$URL" > frontend/config.js
           echo "config.js -> $URL"
+
+          # Preconnect to the API origin so its TLS handshake overlaps page load.
+          ORIGIN=$(printf '%s' "$URL" | sed -E 's#^(https?://[^/]+).*#\1#')
+          if printf '%s' "$ORIGIN" | grep -qE '^https?://'; then
+            sed -i "s|<!-- API_ORIGIN_PRECONNECT -->|<link rel=\"preconnect\" href=\"$ORIGIN\" crossorigin>|" frontend/index.html
+            echo "preconnect -> $ORIGIN"
+          else
+            sed -i "s|<!-- API_ORIGIN_PRECONNECT -->||" frontend/index.html
+            echo "no API origin; preconnect skipped"
+          fi
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

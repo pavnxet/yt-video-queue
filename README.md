@@ -1,6 +1,6 @@
 # YT Video Queue
 
-**v1.3** — a personal, passkey-protected watch queue for YouTube, Telegram and
+**v1.4** — a personal, passkey-protected watch queue for YouTube, Telegram and
 any other web video link.
 
 Add links into ordered **series**, watch them **one by one**, and have the next
@@ -95,7 +95,8 @@ yt-video-queue/
 │  ├─ app.js                 # SPA controller (auth, series, player, export)
 │  ├─ player.js              # YouTube IFrame player + completion detection
 │  ├─ styles.css
-│  └─ config.js             # API_BASE_URL (written at deploy time)
+│  ├─ config.js             # API_BASE_URL (written at deploy time)
+│  └─ vendor/               # simplewebauthn.js, vendored (~9 KB, no CDN)
 ├─ api/                      # Cloudflare Worker
 │  ├─ src/index.ts           # router + CORS
 │  ├─ src/auth.ts            # WebAuthn register/login + sessions
@@ -109,6 +110,27 @@ yt-video-queue/
 ├─ schema.sql
 └─ .github/workflows/        # deploy-pages.yml + deploy-api.yml
 ```
+
+---
+
+## Performance
+
+The first paint does as little as possible:
+
+- **No third-party CDN.** The passkey helper is vendored at
+  `frontend/vendor/simplewebauthn.js` (~9 KB) instead of being fetched from a
+  CDN, and it is only loaded when you actually sign in.
+- **YouTube's player script is loaded lazily.** It is a large third-party script
+  and is now fetched only when you play a video, not on page load.
+- **One API call at startup.** `GET /auth/status` reports both whether
+  registration is open and whether your session is still valid, so a signed-in
+  visitor makes a single round trip instead of two.
+- **Preconnect to the Worker** is injected into the HTML at deploy time, so its
+  TLS handshake overlaps the rest of the page load.
+- Thumbnails use `loading="lazy"`, and every font is a system font — no webfonts.
+
+The remaining cost is `styles.css` (~14 KB) and `app.js` (~40 KB), both served
+from the same origin and cached by GitHub Pages.
 
 ---
 
@@ -260,6 +282,10 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.4** — faster startup: the passkey helper is vendored locally instead of
+  loaded from a CDN and is fetched only when signing in; the YouTube player
+  script is loaded lazily; startup is one API call instead of two; a preconnect
+  to the Worker is injected at deploy time.
 - **v1.3** — titles in the series list are now links out to their source app
   (YouTube, Telegram, …); private Telegram channel posts are no longer embedded,
   and embeddable frames gained an "open in the app" fallback link.

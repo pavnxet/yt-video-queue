@@ -1,10 +1,17 @@
 // app.js — the single-page controller: auth, dashboard, series, player queue.
-// v1.0
+// v1.4
 import { API_BASE_URL } from './config.js';
 import { QueuePlayer } from './player.js';
-import { startRegistration, startAuthentication } from 'https://esm.sh/@simplewebauthn/browser@13';
 
-const VERSION = '1.3';
+// The passkey helper is ~9 KB and is only needed to sign in, so it is loaded on
+// demand rather than on every page view. It is vendored locally — no CDN.
+let passkeyLib = null;
+function passkeys() {
+  if (!passkeyLib) passkeyLib = import('./vendor/simplewebauthn.js');
+  return passkeyLib;
+}
+
+const VERSION = '1.4';
 const TOKEN_KEY = 'ytq_token';
 const VIEWS = ['login-view', 'dashboard-view', 'series-view', 'player-view'];
 
@@ -229,7 +236,9 @@ async function init() {
     return;
   }
 
-  let status = { registrationOpen: true, ownerRegistered: false };
+  // A single round trip: /auth/status also reports whether our token is still
+  // valid, so a signed-in visitor makes one API call at startup, not two.
+  let status = { registrationOpen: true, ownerRegistered: false, user: null };
   try {
     status = await api('/auth/status');
   } catch (e) {
@@ -237,16 +246,12 @@ async function init() {
   }
   $('#register-block').hidden = !status.registrationOpen;
 
-  if (token) {
-    try {
-      const me = await api('/auth/me');
-      state.user = me.user;
-      enterApp();
-      return;
-    } catch (e) {
-      if (!(e instanceof AuthError)) console.warn('session check failed', e);
-    }
+  if (status.user) {
+    state.user = status.user;
+    enterApp();
+    return;
   }
+  if (token) setToken(''); // the stored session is no longer valid
   show('login-view');
 }
 
@@ -1248,6 +1253,7 @@ function wireEvents() {
     err.textContent = '';
     try {
       const { ceremonyId, options } = await api('/auth/login/options', { method: 'POST' });
+      const { startAuthentication } = await passkeys();
       const assertion = await startAuthentication({ optionsJSON: options });
       const result = await api('/auth/login/verify', { method: 'POST', body: { ceremonyId, response: assertion } });
       setToken(result.token);
@@ -1267,6 +1273,7 @@ function wireEvents() {
         method: 'POST',
         body: { bootstrapSecret },
       });
+      const { startRegistration } = await passkeys();
       const attestation = await startRegistration({ optionsJSON: options });
       const result = await api('/auth/register/verify', { method: 'POST', body: { ceremonyId, response: attestation } });
       setToken(result.token);

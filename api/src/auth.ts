@@ -79,14 +79,21 @@ async function takeChallenge(
 
 // ---- endpoints ------------------------------------------------------------
 
-/** GET /auth/status — public: tells the UI whether registration is still open. */
-export async function statusHandler(env: Env): Promise<Response> {
-  const ownerRegistered = (await getConfig(env, 'owner_registered')) === '1';
+// GET /auth/status — public. One call answers everything the page needs on load:
+// whether registration is open, and whether the caller's session is still valid,
+// so startup costs a single round trip instead of two.
+export async function statusHandler(request: Request, env: Env): Promise<Response> {
+  const token = bearer(request);
+  const [ownerRegistered, user] = await Promise.all([
+    getConfig(env, 'owner_registered').then((v) => v === '1'),
+    token ? getSessionUser(env, token) : Promise.resolve(null),
+  ]);
   const authMode = env.AUTH_MODE || 'owner';
   return json({
     authMode,
     ownerRegistered,
     registrationOpen: authMode !== 'owner' || !ownerRegistered,
+    user: user || null,
   });
 }
 

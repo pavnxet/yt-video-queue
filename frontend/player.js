@@ -1,7 +1,18 @@
 // player.js — thin wrapper around the YouTube IFrame Player API.
 // Detects completion (state ENDED) and reports playback progress.
+// The YouTube script itself is loaded lazily, only when a video is played.
 
 let apiPromise = null;
+
+/** Inject the YouTube IFrame API script the first time a video is played. */
+function injectYouTubeApi() {
+  if (document.querySelector('script[data-yt-api]')) return;
+  const s = document.createElement('script');
+  s.src = 'https://www.youtube.com/iframe_api';
+  s.async = true;
+  s.dataset.ytApi = '1';
+  document.head.appendChild(s);
+}
 
 /** Resolve once window.YT is available. */
 export function loadYouTubeApi() {
@@ -13,6 +24,7 @@ export function loadYouTubeApi() {
       if (typeof prev === 'function') prev();
       resolve(window.YT);
     };
+    injectYouTubeApi();
     // never hang forever if the player script fails to load
     setTimeout(() => {
       if (!(window.YT && window.YT.Player)) reject(new Error('YouTube player failed to load'));
