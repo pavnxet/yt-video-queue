@@ -28,6 +28,7 @@ jobs:
       - name: Write config.js and preconnect
         run: |
           URL="${{ vars.API_BASE_URL }}"
+          URL="${URL%/}"   # tolerate a trailing slash in the variable
           if [ -z "$URL" ]; then URL="https://REPLACE_WITH_YOUR_WORKER_URL"; fi
           printf 'export const API_BASE_URL = "%s";\n' "$URL" > frontend/config.js
           echo "config.js -> $URL"

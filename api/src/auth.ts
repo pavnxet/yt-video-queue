@@ -83,11 +83,11 @@ async function takeChallenge(
 // whether registration is open, and whether the caller's session is still valid,
 // so startup costs a single round trip instead of two.
 export async function statusHandler(request: Request, env: Env): Promise<Response> {
+  // Sequential on purpose: two queries run concurrently against one libSQL
+  // client is not worth the risk, and the browser still makes a single call.
+  const ownerRegistered = (await getConfig(env, 'owner_registered')) === '1';
   const token = bearer(request);
-  const [ownerRegistered, user] = await Promise.all([
-    getConfig(env, 'owner_registered').then((v) => v === '1'),
-    token ? getSessionUser(env, token) : Promise.resolve(null),
-  ]);
+  const user = token ? await getSessionUser(env, token) : null;
   const authMode = env.AUTH_MODE || 'owner';
   return json({
     authMode,

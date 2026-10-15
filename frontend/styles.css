@@ -290,6 +290,7 @@ textarea { resize: vertical; min-height: 84px; }
 .video-item .vtitle.link { color: inherit; text-decoration: none; cursor: pointer; }
 .video-item .vtitle.link:hover { text-decoration: underline; }
 .frame-fallback { margin-top: 10px; }
+.loading { text-align: center; padding: 48px 0; color: var(--muted); }
 .video-item .row-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 
 /* --- view modes (Windows-Explorer style) --------------------------------- */

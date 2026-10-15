@@ -11,9 +11,9 @@ function passkeys() {
   return passkeyLib;
 }
 
-const VERSION = '1.4';
+const VERSION = '1.4.1';
 const TOKEN_KEY = 'ytq_token';
-const VIEWS = ['login-view', 'dashboard-view', 'series-view', 'player-view'];
+const VIEWS = ['loading-view', 'login-view', 'dashboard-view', 'series-view', 'player-view'];
 
 let token = localStorage.getItem(TOKEN_KEY) || '';
 let player = null;
@@ -66,18 +66,37 @@ function toast(message) {
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' };
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  const res = await fetch(API_BASE_URL.replace(/\/+$/, '') + path, {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+
+  // Never let a stalled request freeze the UI.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  let res;
+  try {
+    res = await fetch(API_BASE_URL.replace(/\/+$/, '') + path, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    throw e && e.name === 'AbortError' ? new Error('the API did not respond in time') : e;
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (res.status === 401) {
     setToken('');
     show('login-view');
     throw new AuthError('unauthorized');
   }
+
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null; // a non-JSON body (a proxy or error page) is treated as no data
+  }
   if (!res.ok) {
     const msg = data && data.error ? data.error : 'HTTP ' + res.status;
     throw new Error(data && data.detail ? msg + ': ' + data.detail : msg);
@@ -229,30 +248,59 @@ async function init() {
   const ver = $('#app-version');
   if (ver) ver.textContent = 'v' + VERSION;
 
+  // Whatever happens from here on, end up on a visible screen — never a blank
+  // page with no explanation.
+  try {
+    await startApp();
+  } catch (e) {
+    console.error('startup failed', e);
+    showLoginError('Could not start the app: ' + (e && e.message ? e.message : e));
+  }
+}
+
+function showLoginError(message) {
+  show('login-view');
+  const err = $('#login-error');
+  if (err) err.textContent = message;
+}
+
+async function startApp() {
+  // Paint something immediately so the page is never empty while we wait.
+  show('loading-view');
+
   if (!API_BASE_URL || API_BASE_URL.includes('REPLACE_WITH')) {
-    show('login-view');
-    $('#login-error').textContent =
-      'API_BASE_URL is not configured. Set it in frontend/config.js (or the repo variable API_BASE_URL).';
+    showLoginError(
+      'API_BASE_URL is not configured. Set the API_BASE_URL repository variable and re-run the Pages workflow.',
+    );
     return;
   }
 
   // A single round trip: /auth/status also reports whether our token is still
   // valid, so a signed-in visitor makes one API call at startup, not two.
-  let status = { registrationOpen: true, ownerRegistered: false, user: null };
+  let status = null;
   try {
     status = await api('/auth/status');
   } catch (e) {
     console.warn('status check failed', e);
   }
-  $('#register-block').hidden = !status.registrationOpen;
+  const info = status && typeof status === 'object' ? status : {};
+  $('#register-block').hidden = !info.registrationOpen;
 
-  if (status.user) {
-    state.user = status.user;
+  if (info.user) {
+    state.user = info.user;
     enterApp();
     return;
   }
+
   if (token) setToken(''); // the stored session is no longer valid
   show('login-view');
+  if (!status) {
+    const err = $('#login-error');
+    if (err) {
+      err.textContent =
+        'Could not reach the API. Check that the Worker is deployed and that API_BASE_URL points at it.';
+    }
+  }
 }
 
 function enterApp() {

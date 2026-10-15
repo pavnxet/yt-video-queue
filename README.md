@@ -1,6 +1,6 @@
 # YT Video Queue
 
-**v1.4** — a personal, passkey-protected watch queue for YouTube, Telegram and
+**v1.4.1** — a personal, passkey-protected watch queue for YouTube, Telegram and
 any other web video link.
 
 Add links into ordered **series**, watch them **one by one**, and have the next
@@ -267,6 +267,13 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 - **"API_BASE_URL is not configured"** — set the `API_BASE_URL` repo variable and
   re-run the Pages workflow (or edit `frontend/config.js`).
+- **A blank page with only the header and footer** — should no longer happen; if
+  you see one, tell me which browser. From v1.4.1 the page always paints a
+  *Loading…* state and then either the app or the login screen with a reason.
+- **"Could not reach the API"** — the browser could not read a valid answer from
+  the Worker. Check the Worker is deployed and that `API_BASE_URL` matches its
+  URL. Some networks and privacy tools block `*.workers.dev`; if that is the
+  case, put the Worker on a custom domain and update `API_BASE_URL`.
 - **Passkey prompt doesn't appear / fails** — make sure you are on `https://` (or
   `localhost`) and that `RP_ID` matches the site's domain.
 - **A video won't play** — it may be private, removed or region-blocked; press
@@ -282,6 +289,11 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.4.1** — robustness fix: startup can no longer leave a blank page. A
+  loading state is painted immediately, the whole startup is wrapped so any
+  failure lands on a visible screen with a message, API requests time out after
+  12 s instead of hanging, a non-JSON or empty response is handled, and a
+  trailing slash in `API_BASE_URL` is tolerated.
 - **v1.4** — faster startup: the passkey helper is vendored locally instead of
   loaded from a CDN and is fetched only when signing in; the YouTube player
   script is loaded lazily; startup is one API call instead of two; a preconnect
