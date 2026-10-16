@@ -331,9 +331,11 @@ async function startApp() {
   // A single round trip: /auth/status also reports whether our token is still
   // valid, so a signed-in visitor makes one API call at startup, not two.
   let status = null;
+  let statusError = null;
   try {
     status = await api('/auth/status');
   } catch (e) {
+    statusError = e;
     console.warn('status check failed', e);
   }
   const info = status && typeof status === 'object' ? status : {};
@@ -350,8 +352,15 @@ async function startApp() {
   if (!status) {
     const err = $('#login-error');
     if (err) {
+      // Say exactly what failed and where we looked, so this is diagnosable
+      // without opening devtools.
+      const reason = statusError && statusError.message ? statusError.message : 'no response';
       err.textContent =
-        'Could not reach the API. Check that the Worker is deployed and that API_BASE_URL points at it.';
+        'Could not reach the API — ' + reason + '.\n' +
+        'Tried: ' + API_BASE_URL.replace(/\/+$/, '') + '/auth/status\n' +
+        'If that URL opens in a new tab, the Worker is fine and this network (VPN, '
+        + 'ad-blocker or DNS filter) is blocking *.workers.dev.';
+      err.style.whiteSpace = 'pre-line';
     }
   }
 }
