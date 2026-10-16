@@ -11,7 +11,7 @@ function passkeys() {
   return passkeyLib;
 }
 
-const VERSION = '1.4.1';
+const VERSION = '1.5.0';
 const TOKEN_KEY = 'ytq_token';
 const VIEWS = ['loading-view', 'login-view', 'dashboard-view', 'series-view', 'player-view'];
 

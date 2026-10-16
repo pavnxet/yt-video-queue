@@ -1,6 +1,6 @@
 # YT Video Queue
 
-**v1.4.1** — a personal, passkey-protected watch queue for YouTube, Telegram and
+**v1.5.0** — a personal, passkey-protected watch queue for YouTube, Telegram and
 any other web video link.
 
 Add links into ordered **series**, watch them **one by one**, and have the next
@@ -291,6 +291,15 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.5.0** — **every series has its own link.** `#/s/<seriesId>` opens that
+  series directly and `#/s/<seriesId>/v/<videoId>` opens a video inside it, so
+  series can be bookmarked and shared. The hash is the single source of truth, so
+  the browser's back and forward buttons work and a deep link opened while signed
+  out is honoured after login. A new **🔗 Link** button copies the current
+  series' URL, and deleting the series you are viewing returns you to the
+  dashboard instead of leaving a dead link. Also: the startup "could not reach the
+  API" message now names the actual reason and the URL it tried. New
+  `tests/routing.test.js` (20 assertions).
 - **v1.4.1** — robustness fix: startup can no longer leave a blank page. A
   loading state is painted immediately, the whole startup is wrapped so any
   failure lands on a visible screen with a message, API requests time out after
