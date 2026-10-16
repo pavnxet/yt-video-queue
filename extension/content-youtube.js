@@ -1,86 +1,145 @@
 /**
  * YT Video Queue — Save
- * Runs on YouTube. Adds a small floating "Save to queue" pill and an inline
- * panel with a series picker, so you can queue a video without leaving the page.
+ * Runs on YouTube. Adds a small glass "Save to queue" pill you can drag
+ * anywhere, hide when you want the video unobstructed, and reopen with a slim
+ * restore handle. The panel that opens from it knows whether the video is
+ * already queued, can resume where you left off, mark it watched, and peek at
+ * what's next in the series.
  *
- * The UI lives in a shadow root, so YouTube's own stylesheet can never leak in
- * and ours can never leak out.
+ * Everything lives in a shadow root, so YouTube's stylesheet can never leak in.
  */
 
 (() => {
   if (window.__ytqSaveLoaded) return;
   window.__ytqSaveLoaded = true;
 
+  const SITE_URL = 'https://pavnxet.github.io/yt-video-queue/';
+  const POS_KEY = 'pillPos';
+  const HIDDEN_KEY = 'pillHidden';
+
   const STYLES = `
     :host { all: initial; }
     * { box-sizing: border-box; font-family: "Styrene B", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    .pill, .panel { color: #1F1E1D; }
-    .pill {
-      position: fixed; right: 22px; bottom: 22px; z-index: 2147483000;
-      display: flex; align-items: center; gap: 8px;
-      padding: 11px 16px; border-radius: 999px; cursor: pointer;
-      background: #D97757; color: #fff; font-size: 13.5px; font-weight: 700;
-      border: 1px solid #D97757; box-shadow: 0 8px 26px rgba(31,30,29,.28);
-      transition: transform .15s ease, background .2s ease;
-      user-select: none;
-    }
-    .pill:hover { background: #C15F3C; border-color: #C15F3C; transform: translateY(-1px); }
-    .pill[hidden] { display: none; }
-    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; opacity: .9; }
 
+    /* ---- the glass pill ---- */
+    .pill {
+      position: fixed; z-index: 2147483000;
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 13px 10px 15px; border-radius: 999px;
+      background: rgba(28, 26, 24, 0.42);
+      -webkit-backdrop-filter: blur(16px) saturate(170%);
+      backdrop-filter: blur(16px) saturate(170%);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+      color: #F5F3EC; font-size: 13px; font-weight: 700; letter-spacing: .01em;
+      cursor: grab; user-select: none; touch-action: none;
+      transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
+    }
+    .pill:hover { background: rgba(28, 26, 24, 0.55); border-color: rgba(255,255,255,.30); }
+    .pill.dragging { cursor: grabbing; transition: none; }
+    .pill[hidden] { display: none; }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #E08A6B; flex: 0 0 auto; }
+    .pill.saved .dot { background: #6FBF97; }
+    .pill .label { text-shadow: 0 1px 3px rgba(0, 0, 0, .55); white-space: nowrap; }
+    .pill .x {
+      width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
+      background: rgba(255,255,255,.16); color: #F5F3EC; font-size: 11px; line-height: 1;
+      display: none; align-items: center; justify-content: center; padding: 0; margin-left: 2px;
+    }
+    .pill:hover .x { display: flex; }
+    .pill .x:hover { background: rgba(255,255,255,.30); }
+
+    /* ---- slim restore handle when the pill is hidden ---- */
+    .handle {
+      position: fixed; z-index: 2147483000;
+      width: 30px; height: 30px; border-radius: 50%;
+      background: rgba(28, 26, 24, 0.34);
+      -webkit-backdrop-filter: blur(14px) saturate(160%);
+      backdrop-filter: blur(14px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.26);
+      color: #F5F3EC; font-size: 13px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      opacity: .5; transition: opacity .2s ease, background .2s ease;
+    }
+    .handle:hover { opacity: 1; background: rgba(28, 26, 24, 0.6); }
+    .handle[hidden] { display: none; }
+
+    /* ---- the panel ---- */
     .panel {
-      position: fixed; right: 22px; bottom: 76px; z-index: 2147483001;
-      width: 320px; background: #fff; border: 1px solid #E8E6DF; border-radius: 16px;
-      box-shadow: 0 20px 50px rgba(31,30,29,.24); overflow: hidden;
-      display: none;
+      position: fixed; z-index: 2147483001; width: 330px;
+      background: rgba(255, 255, 255, 0.92);
+      -webkit-backdrop-filter: blur(22px) saturate(180%);
+      backdrop-filter: blur(22px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.55);
+      border-radius: 16px; box-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+      overflow: hidden; color: #1F1E1D; display: none;
     }
     .panel[data-open="1"] { display: block; }
-    .head { display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 14px; background: #F5F4EE; border-bottom: 1px solid #E8E6DF; }
-    .head h3 { margin: 0; font-family: Copernicus, "Source Serif 4", Georgia, serif;
-      font-size: 14px; font-weight: 600; color: #1F1E1D; }
-    .x { background: none; border: none; cursor: pointer; color: #87867F; font-size: 16px; line-height: 1; padding: 2px 4px; }
-    .x:hover { color: #1F1E1D; }
-    .body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 12px 14px; background: rgba(245, 244, 238, 0.7); border-bottom: 1px solid rgba(0,0,0,.06); }
+    .head h3 { margin: 0; font-family: Copernicus, "Source Serif 4", Georgia, serif; font-size: 14px; font-weight: 600; }
+    .head .grip { cursor: grab; color: #87867F; font-size: 13px; }
+    .x2 { background: none; border: none; cursor: pointer; color: #87867F; font-size: 16px; line-height: 1; padding: 2px 4px; }
+    .x2:hover { color: #1F1E1D; }
+    .body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; max-height: 62vh; overflow-y: auto; }
     .row { display: flex; gap: 10px; align-items: flex-start; }
-    .thumb { width: 84px; height: 48px; border-radius: 8px; object-fit: cover; background: #F0EEE7; flex: 0 0 auto; border: 1px solid #E8E6DF; }
+    .thumb { width: 88px; height: 50px; border-radius: 8px; object-fit: cover; background: #F0EEE7; flex: 0 0 auto; border: 1px solid rgba(0,0,0,.07); }
     .meta { min-width: 0; flex: 1; }
     .title { font-size: 12.5px; font-weight: 600; line-height: 1.35; color: #1F1E1D;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .sub { font-size: 11px; color: #87867F; margin-top: 2px; }
     label { font-size: 11px; font-weight: 700; color: #575653; display: block; margin-bottom: 4px; letter-spacing: .02em; }
-    select, input[type=text] {
-      width: 100%; padding: 9px 10px; font-size: 12.5px; color: #1F1E1D; background: #fff;
-      border: 1px solid #D9D6CC; border-radius: 9px; outline: none;
-    }
+    select, input[type=text] { width: 100%; padding: 9px 10px; font-size: 12.5px; color: #1F1E1D;
+      background: #fff; border: 1px solid #D9D6CC; border-radius: 9px; outline: none; font-family: inherit; }
     select:focus, input:focus { border-color: #D97757; box-shadow: 0 0 0 3px rgba(217,119,87,.28); }
     .btn { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #D9D6CC;
-      background: #fff; color: #1F1E1D; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+      background: #fff; color: #1F1E1D; font-size: 12.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
     .btn:hover { border-color: #D97757; color: #8A3F24; }
     .btn.primary { background: #D97757; border-color: #D97757; color: #fff; }
     .btn.primary:hover { background: #C15F3C; border-color: #C15F3C; color: #fff; }
     .btn:disabled { opacity: .55; cursor: not-allowed; }
-    .btn.ghost { background: #F5F4EE; }
+    .btn.sm { padding: 7px 10px; font-size: 11.5px; width: auto; }
+    .btnrow { display: flex; gap: 6px; }
+    .btnrow .btn { width: auto; flex: 1; }
+    .status { border-radius: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.45;
+      background: rgba(47,125,91,.12); border: 1px solid rgba(47,125,91,.30); color: #2F7D5B; }
+    .status b { color: #235c43; }
+    .peek { border: 1px solid rgba(0,0,0,.08); border-radius: 10px; overflow: hidden; }
+    .peek h4 { margin: 0; padding: 8px 11px; font-size: 11px; font-weight: 700; color: #575653;
+      background: rgba(245,244,238,.8); border-bottom: 1px solid rgba(0,0,0,.06); text-transform: uppercase; letter-spacing: .05em; }
+    .peek ul { list-style: none; margin: 0; padding: 0; max-height: 150px; overflow-y: auto; }
+    .peek li { display: flex; gap: 8px; align-items: center; padding: 7px 11px; font-size: 12px; cursor: pointer; border-bottom: 1px solid rgba(0,0,0,.05); }
+    .peek li:last-child { border-bottom: none; }
+    .peek li:hover { background: rgba(217,119,87,.10); }
+    .peek li .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .peek li .d { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px; color: #87867F; }
     .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 9px 14px; background: #F5F4EE; border-top: 1px solid #E8E6DF; font-size: 11px; color: #575653; }
+      padding: 9px 14px; background: rgba(245,244,238,.7); border-top: 1px solid rgba(0,0,0,.06); font-size: 11px; color: #575653; }
     .foot a { color: #8A3F24; text-decoration: none; font-weight: 600; }
     .foot a:hover { text-decoration: underline; }
-    .msg { font-size: 11.5px; line-height: 1.4; min-height: 16px; }
-    .msg.ok { color: #2F7D5B; } .msg.warn { color: #B4791F; } .msg.err { color: #C0392B; } .msg.muted { color: #87867F; }
+    .msg { font-size: 11.5px; line-height: 1.45; min-height: 15px; color: #87867F; }
+    .msg.ok { color: #2F7D5B; } .msg.warn { color: #B4791F; } .msg.err { color: #C0392B; }
     .newrow { display: none; gap: 6px; }
     .newrow[data-open="1"] { display: flex; }
     .newrow input { flex: 1; }
-    .newrow button { flex: 0 0 auto; width: auto; padding: 9px 12px; }
+    .newrow button { flex: 0 0 auto; width: auto; }
     .toast {
-      position: fixed; right: 22px; bottom: 22px; z-index: 2147483002;
-      background: #232220; color: #F5F3EC; padding: 10px 14px; border-radius: 12px;
-      font-size: 12.5px; font-weight: 600; box-shadow: 0 12px 34px rgba(0,0,0,.35);
+      position: fixed; z-index: 2147483002; padding: 10px 14px; border-radius: 12px;
+      background: rgba(28,26,24,0.72); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+      color: #F5F3EC; font-size: 12.5px; font-weight: 600; box-shadow: 0 12px 34px rgba(0,0,0,.34);
       opacity: 0; transform: translateY(8px); transition: all .25s ease; pointer-events: none;
     }
     .toast[data-show="1"] { opacity: 1; transform: translateY(0); }
-  `;
 
-  const SITE_URL = 'https://pavnxet.github.io/yt-video-queue/';
+    /* graceful fallback where blur is unavailable */
+    @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+      .pill { background: rgba(28,26,24,0.86); }
+      .handle { background: rgba(28,26,24,0.86); opacity: .8; }
+      .panel { background: #FFFFFF; }
+      .toast { background: rgba(28,26,24,0.94); }
+    }
+  `;
 
   const host = document.createElement('div');
   host.id = 'ytq-save-root';
@@ -92,21 +151,32 @@
 
   const pill = document.createElement('div');
   pill.className = 'pill';
-  pill.innerHTML = '<span class="dot"></span><span>Save to queue</span>';
-  pill.title = 'Save this video to your YT Video Queue (Alt+Q)';
+  pill.innerHTML = '<span class="dot"></span><span class="label">Save to queue</span><button class="x" title="Hide (you can bring it back)">✕</button>';
+
+  const handle = document.createElement('div');
+  handle.className = 'handle';
+  handle.textContent = '＋';
+  handle.title = 'Show the “Save to queue” button';
+  handle.hidden = true;
 
   const panel = document.createElement('div');
   panel.className = 'panel';
   panel.innerHTML = `
-    <div class="head"><h3>Save to queue</h3><button class="x" title="Close">✕</button></div>
+    <div class="head">
+      <h3>Save to queue</h3>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="grip" title="Drag to move">⣿</span>
+        <button class="x2" title="Close">✕</button>
+      </div>
+    </div>
     <div class="body">
       <div class="row">
         <img class="thumb" alt="">
-        <div class="meta">
-          <div class="title"></div>
-          <div class="sub"></div>
-        </div>
+        <div class="meta"><div class="title"></div><div class="sub"></div></div>
       </div>
+
+      <div class="status" hidden></div>
+
       <div>
         <label>Series</label>
         <select class="series"></select>
@@ -116,8 +186,20 @@
         <button class="btn primary create">Create</button>
       </div>
       <button class="btn primary save">Save to queue</button>
+
+      <div class="btnrow queued" hidden>
+        <button class="btn sm resume" hidden>▶ Resume</button>
+        <button class="btn sm watched">Mark watched</button>
+      </div>
+
       <button class="btn playlist" hidden></button>
-      <div class="msg muted">Ready.</div>
+
+      <div class="peek" hidden>
+        <h4 class="peekTitle">Next in this series</h4>
+        <ul class="peekList"></ul>
+      </div>
+
+      <div class="msg">Ready.</div>
     </div>
     <div class="foot">
       <span class="who">Not connected</span>
@@ -129,15 +211,18 @@
   toast.className = 'toast';
 
   root.appendChild(pill);
+  root.appendChild(handle);
   root.appendChild(panel);
   root.appendChild(toast);
 
-  const $ = (sel) => panel.querySelector(sel);
+  const $ = (s) => panel.querySelector(s);
   const els = {
     thumb: $('.thumb'), title: $('.title'), sub: $('.sub'),
-    series: $('.series'), newrow: $('.newrow'), newname: $('.newname'),
-    create: $('.create'), save: $('.save'), playlist: $('.playlist'),
-    msg: $('.msg'), who: $('.who'), close: $('.x')
+    status: $('.status'), series: $('.series'), newrow: $('.newrow'), newname: $('.newname'),
+    create: $('.create'), save: $('.save'), queued: $('.queued'), resume: $('.resume'),
+    watched: $('.watched'), playlist: $('.playlist'), peek: $('.peek'),
+    peekTitle: $('.peekTitle'), peekList: $('.peekList'),
+    msg: $('.msg'), who: $('.who'), close: $('.x2'), grip: $('.grip')
   };
 
   function send(msg) {
@@ -151,16 +236,20 @@
     });
   }
 
-  function setMsg(text, kind) {
-    els.msg.textContent = text || '';
-    els.msg.className = 'msg ' + (kind || 'muted');
-  }
-
+  const setMsg = (t, k) => { els.msg.textContent = t || ''; els.msg.className = 'msg ' + (k || ''); };
   function showToast(text) {
     toast.textContent = text;
     toast.dataset.show = '1';
     clearTimeout(showToast._t);
     showToast._t = setTimeout(() => { toast.dataset.show = '0'; }, 2600);
+  }
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  function fmtDur(sec) {
+    sec = Math.round(sec || 0);
+    if (!sec) return '';
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
   }
 
   // ------------------------------------------------------------ page info
@@ -185,10 +274,7 @@
     const chanEl = document.querySelector('#owner #channel-name a, ytd-channel-name a, #channel-name a');
     const channel = (chanEl && chanEl.textContent || '').trim();
     return {
-      videoId: vid,
-      url: 'https://www.youtube.com/watch?v=' + vid,
-      title,
-      channel,
+      videoId: vid, url: 'https://www.youtube.com/watch?v=' + vid, title, channel,
       durationSeconds: el && isFinite(el.duration) ? el.duration : 0,
       currentTime: el && isFinite(el.currentTime) ? el.currentTime : 0,
       thumbnail: 'https://i.ytimg.com/vi/' + vid + '/hqdefault.jpg'
@@ -211,22 +297,161 @@
     return unique.length > 1 ? { count: unique.length, urls: unique } : null;
   }
 
-  // ------------------------------------------------------------ UI state
+  // ------------------------------------------------------------ position & visibility
 
-  let cfg = { apiBaseUrl: '', hasToken: false, lastSeriesId: '', lastSeriesTitle: '', settings: { showPill: true } };
+  let pos = null;       // {left, top} once dragged
+  let hidden = false;
+  let cfg = { apiBaseUrl: '', hasToken: false, lastSeriesId: '', settings: { showPill: true } };
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function place(el, w, h) {
+    if (pos) {
+      el.style.left = clamp(pos.left, 4, Math.max(4, innerWidth - w - 4)) + 'px';
+      el.style.top = clamp(pos.top, 4, Math.max(4, innerHeight - h - 4)) + 'px';
+      el.style.right = 'auto'; el.style.bottom = 'auto';
+    } else {
+      el.style.right = '22px'; el.style.bottom = '22px';
+      el.style.left = 'auto'; el.style.top = 'auto';
+    }
+  }
 
   function applyVisibility() {
-    pill.hidden = !(cfg.settings && cfg.settings.showPill);
-    if (pill.hidden) panel.dataset.open = '0';
+    const enabled = !(cfg.settings && cfg.settings.showPill === false);
+    pill.hidden = hidden || !enabled;
+    handle.hidden = !(hidden && enabled);
+    if (pill.hidden && panel.dataset.open === '1') panel.dataset.open = '0';
+    if (!pill.hidden) place(pill, pill.offsetWidth || 150, pill.offsetHeight || 38);
+    if (!handle.hidden) place(handle, 30, 30);
+  }
+
+  function positionPanel() {
+    const r = pill.getBoundingClientRect();
+    const pw = panel.offsetWidth || 330;
+    const ph = panel.offsetHeight || 420;
+    let left = r.right - pw;
+    left = clamp(left, 8, Math.max(8, innerWidth - pw - 8));
+    let top = r.top - ph - 10;              // prefer above the pill
+    if (top < 8) top = r.bottom + 10;       // otherwise below
+    top = clamp(top, 8, Math.max(8, innerHeight - ph - 8));
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  }
+
+  // ------------------------------------------------------------ dragging
+
+  function makeDraggable(el, onDone) {
+    let dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target.closest && e.target.closest('button')) return; // don't drag from the ✕
+      const r = el.getBoundingClientRect();
+      dragging = true; moved = false;
+      sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+      el.classList.add('dragging');
+      try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (!moved && Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+      if (!moved) return;
+      const r = el.getBoundingClientRect();
+      pos = { left: clamp(ox + dx, 4, innerWidth - r.width - 4), top: clamp(oy + dy, 4, innerHeight - r.height - 4) };
+      place(el, r.width, r.height);
+      if (panel.dataset.open === '1') positionPanel();
+    });
+    const finish = async (e) => {
+      if (!dragging) return;
+      dragging = false;
+      el.classList.remove('dragging');
+      try { el.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      if (moved) {
+        await chrome.storage.local.set({ [POS_KEY]: pos });
+      } else if (onDone) {
+        onDone();
+      }
+    };
+    el.addEventListener('pointerup', finish);
+    el.addEventListener('pointercancel', finish);
+  }
+
+  makeDraggable(pill, () => openPanel());
+  makeDraggable(handle, () => { hidden = false; chrome.storage.local.set({ [HIDDEN_KEY]: false }); applyVisibility(); });
+
+  pill.querySelector('.x').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    hidden = true;
+    panel.dataset.open = '0';
+    await chrome.storage.local.set({ [HIDDEN_KEY]: true });
+    applyVisibility();
+    showToast('Hidden — click ＋ to bring it back');
+  });
+
+  handle.addEventListener('click', async () => {
+    hidden = false;
+    await chrome.storage.local.set({ [HIDDEN_KEY]: false });
+    applyVisibility();
+  });
+
+  els.close.addEventListener('click', () => { panel.dataset.open = '0'; });
+
+  // ------------------------------------------------------------ queued state
+
+  let queued = null; // { seriesId, seriesTitle, video }
+
+  function renderQueued() {
+    if (queued) {
+      pill.classList.add('saved');
+      pill.querySelector('.label').textContent = 'In ' + (queued.seriesTitle || 'queue');
+      els.status.hidden = false;
+      const st = queued.video.status || 'todo';
+      const resume = queued.video.resumeSeconds || 0;
+      els.status.innerHTML = `In <b>${esc(queued.seriesTitle)}</b> · ${st === 'done' ? 'watched' : st === 'watching' ? 'watching' : 'to watch'}`
+        + (resume ? ` · last at ${esc(fmtDur(resume))}` : '');
+      els.queued.hidden = false;
+      els.resume.hidden = !resume;
+      els.watched.textContent = st === 'done' ? 'Mark unwatched' : 'Mark watched';
+      els.save.textContent = 'Save to another series';
+    } else {
+      pill.classList.remove('saved');
+      pill.querySelector('.label').textContent = 'Save to queue';
+      els.status.hidden = true;
+      els.queued.hidden = true;
+      els.resume.hidden = true;
+      els.save.textContent = 'Save to queue';
+    }
+  }
+
+  async function checkQueued() {
+    const info = videoInfo();
+    if (!info || !(cfg.apiBaseUrl && cfg.hasToken)) { queued = null; renderQueued(); return; }
+    const r = await send({ type: 'findVideo', youtubeId: info.videoId });
+    queued = (r && r.ok && r.found) ? r.matches[0] : null;
+    renderQueued();
+  }
+
+  // ------------------------------------------------------------ panel
+
+  function fillPanel() {
+    const info = videoInfo();
+    if (!info) return false;
+    els.title.textContent = info.title || 'Untitled video';
+    els.sub.textContent = [info.channel, fmtDur(info.durationSeconds)].filter(Boolean).join(' · ');
+    els.thumb.src = info.thumbnail;
+    const pl = playlistInfo();
+    els.playlist.hidden = !pl;
+    if (pl) els.playlist.textContent = `Save all ${pl.count} videos in this playlist`;
+    return true;
   }
 
   async function refreshState() {
     const r = await send({ type: 'state' });
     if (r && r.ok) {
       cfg = { ...cfg, ...r };
+      els.who.textContent = (cfg.apiBaseUrl && cfg.hasToken) ? 'Connected' : 'Not connected';
       applyVisibility();
-      const connected = !!(cfg.apiBaseUrl && cfg.hasToken);
-      els.who.textContent = connected ? 'Connected' : 'Not connected';
     }
   }
 
@@ -234,50 +459,44 @@
     els.series.innerHTML = '<option>Loading…</option>';
     const r = await send({ type: 'series' });
     if (!r || !r.ok) {
-      els.series.innerHTML = '';
-      els.series.disabled = true;
-      els.save.disabled = true;
+      els.series.innerHTML = ''; els.series.disabled = true; els.save.disabled = true;
       setMsg(r && r.needSetup ? 'Open the extension settings and connect.' : ('Could not load series: ' + (r && r.error ? r.error : 'unknown')), 'err');
-      return;
+      return null;
     }
-    els.series.disabled = false;
-    els.save.disabled = false;
+    els.series.disabled = false; els.save.disabled = false;
     const list = r.series || [];
     if (!list.length) {
       els.series.innerHTML = '<option value="">No series yet — create one below</option>';
       els.newrow.dataset.open = '1';
-      return;
+      return list;
     }
-    els.series.innerHTML = list.map((s) =>
-      `<option value="${s.id}">${escapeHtml(s.title)} · ${s.done}/${s.total}</option>`).join('');
-    const pick = selectId || cfg.lastSeriesId;
+    els.series.innerHTML = list.map((s) => `<option value="${s.id}">${esc(s.title)} · ${s.done}/${s.total}</option>`).join('');
+    const pick = selectId || (queued && queued.seriesId) || cfg.lastSeriesId;
     if (pick && list.some((s) => s.id === pick)) els.series.value = pick;
+    return list;
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function fillPanel() {
-    const info = videoInfo();
-    if (!info) return false;
-    els.title.textContent = info.title || 'Untitled video';
-    els.sub.textContent = [info.channel, info.durationSeconds ? formatDur(info.durationSeconds) : ''].filter(Boolean).join(' · ');
-    els.thumb.src = info.thumbnail;
-    const pl = playlistInfo();
-    if (pl) {
-      els.playlist.hidden = false;
-      els.playlist.textContent = `Save all ${pl.count} videos in this playlist`;
-    } else {
-      els.playlist.hidden = true;
-    }
-    return true;
-  }
-
-  function formatDur(sec) {
-    sec = Math.round(sec);
-    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
+  async function loadPeek() {
+    const seriesId = els.series.value;
+    if (!seriesId) { els.peek.hidden = true; return; }
+    const r = await send({ type: 'seriesVideos', seriesId });
+    if (!r || !r.ok) { els.peek.hidden = true; return; }
+    const next = (r.videos || []).filter((v) => v.status !== 'done').slice(0, 5);
+    const title = r.series && r.series.title ? r.series.title : 'this series';
+    if (!next.length) { els.peek.hidden = true; return; }
+    els.peek.hidden = false;
+    els.peekTitle.textContent = `Next in ${title}`;
+    els.peekList.innerHTML = next.map((v) => `
+      <li data-url="${esc(v.url || (v.youtubeId ? 'https://www.youtube.com/watch?v=' + v.youtubeId : ''))}">
+        <span class="t">${esc(v.title || 'Untitled')}</span>
+        ${v.durationSeconds ? `<span class="d">${esc(fmtDur(v.durationSeconds))}</span>` : ''}
+      </li>`).join('');
+    els.peekList.querySelectorAll('li').forEach((li) => {
+      li.addEventListener('click', () => {
+        const url = li.getAttribute('data-url');
+        if (url) location.href = url;
+      });
+    });
   }
 
   async function openPanel() {
@@ -285,20 +504,23 @@
     panel.dataset.open = '1';
     await refreshState();
     if (!(cfg.apiBaseUrl && cfg.hasToken)) {
-      setMsg('Not connected yet. Open the extension settings (right-click the icon) and paste your API URL, or visit your queue site once.', 'warn');
-      els.save.disabled = true;
-      els.series.disabled = true;
+      setMsg('Not connected yet. Open the extension settings and paste your API URL, or visit your queue site once.', 'warn');
+      els.save.disabled = true; els.series.disabled = true;
+      positionPanel();
       return;
     }
     els.save.disabled = false;
-    setMsg('Ready.', 'muted');
+    await checkQueued();
     await loadSeries();
+    await loadPeek();
+    setMsg(queued ? 'Already in your queue.' : 'Ready.', queued ? 'ok' : 'muted');
+    positionPanel();
+    requestAnimationFrame(positionPanel);
   }
 
   // ------------------------------------------------------------ actions
 
-  pill.addEventListener('click', openPanel);
-  els.close.addEventListener('click', () => { panel.dataset.open = '0'; });
+  els.series.addEventListener('change', loadPeek);
 
   els.create.addEventListener('click', async () => {
     const name = (els.newname.value || '').trim();
@@ -307,11 +529,11 @@
     const r = await send({ type: 'createSeries', title: name });
     els.create.disabled = false;
     if (!r || !r.ok) { setMsg('Could not create: ' + (r && r.error ? r.error : 'unknown'), 'err'); return; }
-    els.newname.value = '';
-    els.newrow.dataset.open = '0';
+    els.newname.value = ''; els.newrow.dataset.open = '0';
     setMsg('Series created.', 'ok');
     await send({ type: 'setConfig', patch: { lastSeriesId: r.id } });
     await loadSeries(r.id);
+    await loadPeek();
   });
 
   els.save.addEventListener('click', async () => {
@@ -319,26 +541,45 @@
     if (!info) { setMsg('No video on this page.', 'warn'); return; }
     const seriesId = els.series.value;
     if (!seriesId) { setMsg('Pick or create a series first.', 'warn'); return; }
-    els.save.disabled = true;
-    setMsg('Saving…', 'muted');
-    const r = await send({
-      type: 'save',
-      seriesId,
-      url: info.url,
-      durationSeconds: info.durationSeconds,
-      resumeSeconds: info.currentTime
-    });
+    els.save.disabled = true; setMsg('Saving…', 'muted');
+    const r = await send({ type: 'save', seriesId, url: info.url, durationSeconds: info.durationSeconds, resumeSeconds: info.currentTime });
     els.save.disabled = false;
     if (r && r.ok) {
       setMsg(`Saved to “${r.seriesTitle || 'your queue'}”.`, 'ok');
       showToast('✓ Added to your queue');
       await send({ type: 'setConfig', patch: { lastSeriesId: seriesId } });
+      await checkQueued(); await loadPeek();
     } else if (r && r.duplicate) {
       setMsg(`Already in “${r.seriesTitle || 'this series'}”.`, 'warn');
       showToast('Already in that series');
+      await checkQueued();
     } else {
       setMsg('Could not save: ' + (r && r.error ? r.error : 'unknown'), 'err');
       showToast('Save failed');
+    }
+  });
+
+  els.resume.addEventListener('click', () => {
+    if (!queued) return;
+    const v = document.querySelector('video');
+    if (v && queued.video.resumeSeconds) {
+      v.currentTime = queued.video.resumeSeconds;
+      v.play().catch(() => {});
+      showToast('Resumed at ' + fmtDur(queued.video.resumeSeconds));
+    }
+  });
+
+  els.watched.addEventListener('click', async () => {
+    if (!queued) return;
+    const toDone = queued.video.status !== 'done';
+    els.watched.disabled = true;
+    const r = await send({ type: 'patchVideo', videoId: queued.video.id, status: toDone ? 'done' : 'todo' });
+    els.watched.disabled = false;
+    if (r && r.ok) {
+      showToast(toDone ? 'Marked watched' : 'Marked unwatched');
+      await checkQueued(); await loadPeek();
+    } else {
+      setMsg('Could not update: ' + (r && r.error ? r.error : 'unknown'), 'err');
     }
   });
 
@@ -347,49 +588,51 @@
     if (!pl) return;
     const seriesId = els.series.value;
     if (!seriesId) { setMsg('Pick or create a series first.', 'warn'); return; }
-    els.playlist.disabled = true;
-    setMsg(`Saving ${pl.count} videos…`, 'muted');
+    els.playlist.disabled = true; setMsg(`Saving ${pl.count} videos…`, 'muted');
     const r = await send({ type: 'saveMany', seriesId, urls: pl.urls });
     els.playlist.disabled = false;
-    if (r && r.ok) {
-      setMsg(`Added ${r.added}${r.skipped ? `, skipped ${r.skipped}` : ''}.`, 'ok');
-      showToast(`✓ Added ${r.added} videos`);
-    } else {
-      setMsg('Could not save playlist: ' + (r && r.error ? r.error : 'unknown'), 'err');
-    }
+    if (r && r.ok) { setMsg(`Added ${r.added}${r.skipped ? `, skipped ${r.skipped}` : ''}.`, 'ok'); showToast(`✓ Added ${r.added} videos`); await loadPeek(); }
+    else setMsg('Could not save playlist: ' + (r && r.error ? r.error : 'unknown'), 'err');
   });
 
   // ------------------------------------------------------------ lifecycle
 
   document.documentElement.appendChild(host);
 
-  // Keep the panel in step with YouTube's single-page navigation.
+  (async () => {
+    const stored = await chrome.storage.local.get([POS_KEY, HIDDEN_KEY]);
+    if (stored[POS_KEY]) pos = stored[POS_KEY];
+    hidden = !!stored[HIDDEN_KEY];
+    await refreshState();
+    applyVisibility();
+    checkQueued();
+  })();
+
   let lastHref = location.href;
   function onNav() {
-    if (location.href === lastHref) { if (panel.dataset.open === '1') fillPanel(); return; }
+    if (location.href === lastHref) return;
     lastHref = location.href;
     panel.dataset.open = '0';
-    setTimeout(() => { if (panel.dataset.open === '1') openPanel(); }, 400);
+    queued = null;
+    renderQueued();
+    setTimeout(() => { checkQueued(); if (panel.dataset.open === '1') openPanel(); }, 500);
   }
   window.addEventListener('yt-navigate-finish', onNav);
   window.addEventListener('yt-page-data-updated', onNav);
   const mo = new MutationObserver(() => { clearTimeout(mo._t); mo._t = setTimeout(onNav, 500); });
   mo.observe(document.body, { childList: true, subtree: true });
+  window.addEventListener('resize', () => applyVisibility());
 
-  // React to setting changes made in the popup/options.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.settings) {
-      cfg.settings = { ...cfg.settings, ...(changes.settings.newValue || {}) };
-      applyVisibility();
-    }
+    if (area !== 'local') return;
+    if (changes.settings) { cfg.settings = { ...cfg.settings, ...(changes.settings.newValue || {}) }; applyVisibility(); }
+    if (changes[POS_KEY] && !pos) { pos = changes[POS_KEY].newValue; applyVisibility(); }
+    if (changes[HIDDEN_KEY]) { hidden = !!changes[HIDDEN_KEY].newValue; applyVisibility(); }
   });
 
-  // The service worker asks for this when Alt+Q is pressed.
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.type === 'getVideoInfo') { sendResponse(videoInfo()); return true; }
     if (msg && msg.type === 'openPanel') { openPanel(); sendResponse({ ok: true }); return true; }
     return false;
   });
-
-  refreshState();
 })();

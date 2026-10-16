@@ -200,6 +200,36 @@ async function saveMany({ seriesId, urls }) {
   return { ok: true, added, skipped };
 }
 
+/** Is this video already in the queue? Scans your series, a few at a time. */
+async function findVideo(youtubeId) {
+  if (!youtubeId) return { ok: true, found: false, matches: [] };
+  const list = await listSeries();
+  if (!list.ok) return list;
+  const series = list.series || [];
+  const matches = [];
+  for (let i = 0; i < series.length; i += 5) {
+    const chunk = series.slice(i, i + 5);
+    const got = await Promise.all(chunk.map((s) => seriesVideos(s.id)));
+    for (const g of got) {
+      if (!g.ok) continue;
+      const v = (g.videos || []).find((x) => x.youtubeId === youtubeId);
+      if (v) matches.push({ seriesId: g.series.id, seriesTitle: g.series.title, video: v });
+    }
+  }
+  return { ok: true, found: matches.length > 0, matches };
+}
+
+/** Update a queued video's status or resume position. */
+async function patchVideo({ videoId, status, resumeSeconds }) {
+  if (!videoId) return { ok: false, error: 'No video id.' };
+  const body = {};
+  if (status) body.status = status;
+  if (typeof resumeSeconds === 'number') body.resumeSeconds = Math.max(0, Math.round(resumeSeconds));
+  if (!Object.keys(body).length) return { ok: false, error: 'Nothing to update.' };
+  const r = await api('/videos/' + encodeURIComponent(videoId), { method: 'PATCH', body });
+  return r.ok ? { ok: true } : r;
+}
+
 // ---------------------------------------------------------------- message router
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -249,6 +279,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         case 'saveMany':
           sendResponse(await saveMany(msg));
+          break;
+        case 'findVideo':
+          sendResponse(await findVideo(msg.youtubeId));
+          break;
+        case 'patchVideo':
+          sendResponse(await patchVideo(msg));
           break;
         case 'site': {
           // From the queue site's content script: pick up the token + API URL.

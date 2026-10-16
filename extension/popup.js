@@ -9,7 +9,8 @@ const el = {
   series: $('#series'), newrow: $('#newrow'), newname: $('#newname'), create: $('#create'),
   save: $('#save'), msg: $('#msg'), seriesList: $('#seriesList'),
   settings: $('#settings'), openSettings: $('#openSettings'), openSite: $('#openSite'),
-  refresh: $('#refresh'), openQueue: $('#openQueue'), lastSaved: $('#lastSaved')
+  refresh: $('#refresh'), openQueue: $('#openQueue'), lastSaved: $('#lastSaved'),
+  togglePill: $('#togglePill'), resetPill: $('#resetPill')
 };
 
 let state = { apiBaseUrl: '', hasToken: false, lastSeriesId: '', lastSeriesTitle: '', settings: {} };
@@ -171,6 +172,28 @@ el.create.addEventListener('click', async () => {
   el.series.value = r.id;
 });
 
+function renderPillToggle() {
+  const on = !state.settings || state.settings.showPill !== false;
+  el.togglePill.textContent = on ? 'Hide pill' : 'Show pill';
+}
+
+el.togglePill.addEventListener('click', async () => {
+  const on = !state.settings || state.settings.showPill !== false;
+  const next = !on;
+  await send({ type: 'setConfig', patch: { settings: { showPill: next } } });
+  state.settings = { ...(state.settings || {}), showPill: next };
+  renderPillToggle();
+  el.lastSaved.textContent = next ? 'Pill shown' : 'Pill hidden';
+});
+
+el.resetPill.addEventListener('click', async () => {
+  await chrome.storage.local.remove(['pillPos', 'pillHidden']);
+  await send({ type: 'setConfig', patch: { settings: { showPill: true } } });
+  state.settings = { ...(state.settings || {}), showPill: true };
+  renderPillToggle();
+  el.lastSaved.textContent = 'Pill reset';
+});
+
 el.refresh.addEventListener('click', async () => { await boot(false); });
 el.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
 el.openSettings.addEventListener('click', () => chrome.runtime.openOptionsPage());
@@ -183,6 +206,7 @@ async function boot(first) {
   const st = await send({ type: 'state' });
   if (st && st.ok) state = { ...state, ...st };
   renderStatus();
+  renderPillToggle();
 
   // A link queued from the right-click menu while no series was set.
   if (first) {

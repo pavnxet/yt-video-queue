@@ -18,11 +18,18 @@ It is built for one person — you — and it keeps everything on your machine:
 
 **From YouTube, without leaving the page**
 
-- A floating **“Save to queue”** pill in the bottom-right corner.
+- A floating **glass “Save to queue”** pill — translucent and blurred, so it
+  never hides the video behind it.
+- **Drag it anywhere** and the position is remembered. **Hide it** with the ✕ and
+  it leaves a slim glass handle you can click to bring it back.
+- When the video is already in your queue, the pill turns green and names the
+  series.
 - **`Alt+Q`** saves the video you are watching.
-- The pill opens a small panel with the thumbnail, title and channel, a **series
-  picker**, a **create-series** box, and a **“Save all N videos in this
-  playlist”** button when you are on a playlist page.
+- The panel shows the thumbnail, title and channel, an **“in your queue” status**
+  line, a **▶ Resume at mm:ss** button, **Mark watched / unwatched**, the
+  **series picker**, a **create-series** box, a **“Save all N videos in this
+  playlist”** button on playlist pages, and a **peek at the next videos** in the
+  series that you can click straight through to.
 
 **From the toolbar**
 
@@ -39,6 +46,11 @@ It is built for one person — you — and it keeps everything on your machine:
   one-click saves and `Alt+Q`.
 - **Records duration and position.** When enabled, the row is updated with the
   video’s length and where you had got to, so the queue can resume.
+- **Knows what you’ve already queued.** Opening a video you already saved turns
+  the pill green and offers **Resume** and **Mark watched**, instead of letting
+  you add it twice.
+- **Queue peek.** The panel lists the next few unwatched videos in the series, so
+  you can jump to the next one without opening the web app.
 - **Batch playlists.** A whole playlist is saved in batches of 20, the way the
   web app does it.
 
@@ -69,7 +81,7 @@ extension/
 ├─ background.js          service worker — the only thing that calls your API
 ├─ content-youtube.js     floating pill + panel on YouTube (shadow DOM)
 ├─ content-site.js        reads your token + API URL from your queue site
-├─ popup.html / popup.js  toolbar popup
+├─ popup.html / popup.js  toolbar popup (also toggles / resets the pill)
 ├─ options.html / options.js   settings
 ├─ ui.css                 shared Claude-theme styling
 └─ icons/                 16 / 32 / 48 / 128
