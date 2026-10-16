@@ -72,6 +72,16 @@ only **your** passkey opens it.
 
 ---
 
+## Browser extension
+
+A companion Chrome extension lives in [`extension/`](extension/): it puts a
+**Save to queue** button on YouTube — a floating pill, `Alt+Q`, a series picker,
+playlist batch-save and duplicate detection — and files the video straight into
+your queue through the same API. It is personal-use and unpacked; see
+[extension/README.md](extension/README.md) for install steps and permissions.
+
+---
+
 ## Architecture
 
 ```
