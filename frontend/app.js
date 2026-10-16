@@ -40,6 +40,59 @@ function show(id) {
   }
 }
 
+// ---------------------------------------------------------------- routing
+// Every series gets its own link:   #/s/<seriesId>
+// A video inside it:                #/s/<seriesId>/v/<videoId>
+// The hash is the single source of truth for navigation, so the browser's back
+// and forward buttons work and any series can be bookmarked or shared.
+function seriesHash(id) { return '#/s/' + encodeURIComponent(id); }
+function videoHash(seriesId, videoId) { return seriesHash(seriesId) + '/v/' + encodeURIComponent(videoId); }
+
+function parseHash() {
+  const parts = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  if (parts[0] === 's' && parts[1]) {
+    return {
+      seriesId: decodeURIComponent(parts[1]),
+      videoId: parts[2] === 'v' && parts[3] ? decodeURIComponent(parts[3]) : null,
+    };
+  }
+  return { seriesId: null, videoId: null };
+}
+
+async function applyRoute() {
+  if (!state.user) return; // not signed in yet — enterApp() will call us again
+  const r = parseHash();
+  if (!r.seriesId) {
+    await loadDashboard();
+    return;
+  }
+  try {
+    if (!state.currentSeries || state.currentSeries.id !== r.seriesId) {
+      await openSeries(r.seriesId);
+    } else {
+      show('series-view');
+    }
+    if (r.videoId) await showPlayer(r.videoId);
+  } catch (e) {
+    toast('Could not open that series — it may have been deleted.');
+    if (location.hash !== '#/') location.hash = '#/';
+    else await loadDashboard();
+  }
+}
+
+function goHome() {
+  if (!location.hash || location.hash === '#/') { loadDashboard().catch(() => {}); return; }
+  location.hash = '#/';
+}
+
+function goToSeries(id) {
+  const target = seriesHash(id);
+  if (location.hash === target) { openSeries(id).catch(() => {}); return; }
+  location.hash = target;
+}
+
+window.addEventListener('hashchange', () => { applyRoute().catch(() => {}); });
+
 class AuthError extends Error {}
 
 function setToken(t) {
@@ -306,7 +359,8 @@ async function startApp() {
 function enterApp() {
   $('#user-bar').hidden = false;
   $('#user-name').textContent = state.user?.username || 'owner';
-  loadDashboard();
+  // Honour a deep link (#/s/<id>) if there is one, otherwise show the dashboard.
+  applyRoute().catch((e) => toast('Could not load: ' + (e.message || e)));
 }
 
 // ---------------------------------------------------------------- dashboard
@@ -332,7 +386,7 @@ function seriesCard(s) {
   const row = el('div', 'row-buttons');
 
   const open = el('button', 'primary', 'Open');
-  open.onclick = () => openSeries(s.id);
+  open.onclick = () => goToSeries(s.id);
   row.appendChild(open);
 
   const del = el('button', 'ghost', 'Delete');
@@ -340,7 +394,13 @@ function seriesCard(s) {
     if (!confirm(`Delete "${s.title}" and all its videos?`)) return;
     try {
       await api('/series/' + s.id, { method: 'DELETE' });
-      await loadDashboard();
+      if (state.currentSeries && state.currentSeries.id === s.id) {
+        state.currentSeries = null;
+        state.videos = [];
+        goHome();
+      } else {
+        await loadDashboard();
+      }
     } catch (e) {
       toast('Could not delete: ' + (e.message || e));
     }
@@ -1198,12 +1258,20 @@ function showPlayerMode(mode, v) {
   }
 }
 
-async function openPlayer(videoId) {
+async function showPlayer(videoId) {
+  const v = state.videos.find((x) => x.id === videoId);
+  if (!v) { show('series-view'); return; }
   // show the view first: the YouTube player needs a laid-out container to size itself
   show('player-view');
-  const v = state.videos.find((x) => x.id === videoId);
-  if (!v) return;
   await playVideo(v);
+}
+
+// Keep the URL in step with the player, then show it.
+async function openPlayer(videoId) {
+  if (!state.currentSeries) { await showPlayer(videoId); return; }
+  const target = videoHash(state.currentSeries.id, videoId);
+  if (location.hash === target) { await showPlayer(videoId); return; }
+  location.hash = target; // hashchange -> applyRoute -> showPlayer
 }
 
 async function playVideo(v) {
@@ -1390,13 +1458,27 @@ function wireEvents() {
   $('#rename-series-btn').onclick = () => renameSeries();
   $('#export-btn').onclick = () => openExport();
 
+  const copyLinkBtn = $('#copy-series-link');
+  if (copyLinkBtn) {
+    copyLinkBtn.onclick = async () => {
+      if (!state.currentSeries) return;
+      const url = location.origin + location.pathname + seriesHash(state.currentSeries.id);
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('Link copied: ' + url);
+      } catch {
+        toast(url);
+      }
+    };
+  }
+
   $('#back-to-dash').onclick = () => {
     pauseYt();
-    loadDashboard().catch((e) => toast('Could not load: ' + (e.message || e)));
+    goHome();
   };
   $('#back-to-series').onclick = () => {
     pauseYt();
-    openSeries(state.currentSeries.id).catch((e) => toast('Could not load: ' + (e.message || e)));
+    if (state.currentSeries) goToSeries(state.currentSeries.id);
   };
 
   $('#play-btn').onclick = () => {
