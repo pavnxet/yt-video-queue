@@ -187,7 +187,7 @@ el.togglePill.addEventListener('click', async () => {
 });
 
 el.resetPill.addEventListener('click', async () => {
-  await chrome.storage.local.remove(['pillPos', 'pillHidden']);
+  await chrome.storage.local.remove(['pillPos', 'pillHidden', 'panelPos']);
   await send({ type: 'setConfig', patch: { settings: { showPill: true } } });
   state.settings = { ...(state.settings || {}), showPill: true };
   renderPillToggle();

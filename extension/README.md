@@ -19,9 +19,13 @@ It is built for one person — you — and it keeps everything on your machine:
 **From YouTube, without leaving the page**
 
 - A floating **glass “Save to queue”** pill — translucent and blurred, so it
-  never hides the video behind it.
+  never hides the video behind it. The panel, the toast and every control inside
+  them are glass too, so the whole UI lets the video show through.
 - **Drag it anywhere** and the position is remembered. **Hide it** with the ✕ and
   it leaves a slim glass handle you can click to bring it back.
+- **The panel drags as well** — grab its header (the ⣿ grip) and drop it where
+  you like; that position is remembered too. **Reset position** in the popup puts
+  both back to their default corner.
 - When the video is already in your queue, the pill turns green and names the
   series.
 - **`Alt+Q`** saves the video you are watching.

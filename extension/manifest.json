@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YT Video Queue — Save",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Save the YouTube video you're watching straight into your personal YT Video Queue. Local, private, and yours alone.",
   "author": "pavnxet",
   "homepage_url": "https://github.com/pavnxet/yt-video-queue",

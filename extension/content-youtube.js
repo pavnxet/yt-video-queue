@@ -1,10 +1,10 @@
 /**
  * YT Video Queue — Save
- * Runs on YouTube. Adds a small glass "Save to queue" pill you can drag
- * anywhere, hide when you want the video unobstructed, and reopen with a slim
- * restore handle. The panel that opens from it knows whether the video is
- * already queued, can resume where you left off, mark it watched, and peek at
- * what's next in the series.
+ * Runs on YouTube. A glass "Save to queue" pill you can drag anywhere, hide when
+ * you want the video unobstructed, and reopen with a slim restore handle. The
+ * panel that opens from it is glass too, is draggable by its header, knows
+ * whether the video is already queued, can resume where you left off, mark it
+ * watched, and peek at what's next in the series.
  *
  * Everything lives in a shadow root, so YouTube's stylesheet can never leak in.
  */
@@ -15,8 +15,11 @@
 
   const SITE_URL = 'https://pavnxet.github.io/yt-video-queue/';
   const POS_KEY = 'pillPos';
+  const PANEL_POS_KEY = 'panelPos';
   const HIDDEN_KEY = 'pillHidden';
 
+  // Every surface is glass: translucent + blurred, with a light hairline edge
+  // and an inner highlight, so the video keeps showing through.
   const STYLES = `
     :host { all: initial; }
     * { box-sizing: border-box; font-family: "Styrene B", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -26,24 +29,24 @@
       position: fixed; z-index: 2147483000;
       display: flex; align-items: center; gap: 8px;
       padding: 10px 13px 10px 15px; border-radius: 999px;
-      background: rgba(28, 26, 24, 0.42);
-      -webkit-backdrop-filter: blur(16px) saturate(170%);
-      backdrop-filter: blur(16px) saturate(170%);
-      border: 1px solid rgba(255, 255, 255, 0.20);
-      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.14);
-      color: #F5F3EC; font-size: 13px; font-weight: 700; letter-spacing: .01em;
+      background: rgba(22, 20, 19, 0.36);
+      -webkit-backdrop-filter: blur(18px) saturate(185%);
+      backdrop-filter: blur(18px) saturate(185%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      color: #F7F5F0; font-size: 13px; font-weight: 700; letter-spacing: .01em;
       cursor: grab; user-select: none; touch-action: none;
       transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
     }
-    .pill:hover { background: rgba(28, 26, 24, 0.55); border-color: rgba(255,255,255,.30); }
+    .pill:hover { background: rgba(22, 20, 19, 0.52); border-color: rgba(255,255,255,.34); }
     .pill.dragging { cursor: grabbing; transition: none; }
     .pill[hidden] { display: none; }
-    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #E08A6B; flex: 0 0 auto; }
-    .pill.saved .dot { background: #6FBF97; }
-    .pill .label { text-shadow: 0 1px 3px rgba(0, 0, 0, .55); white-space: nowrap; }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #E08A6B; flex: 0 0 auto; box-shadow: 0 0 8px rgba(224,138,107,.8); }
+    .pill.saved .dot { background: #6FBF97; box-shadow: 0 0 8px rgba(111,191,151,.8); }
+    .pill .label { text-shadow: 0 1px 3px rgba(0, 0, 0, .5); white-space: nowrap; }
     .pill .x {
-      width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
-      background: rgba(255,255,255,.16); color: #F5F3EC; font-size: 11px; line-height: 1;
+      width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); cursor: pointer;
+      background: rgba(255,255,255,.16); color: #F7F5F0; font-size: 11px; line-height: 1;
       display: none; align-items: center; justify-content: center; padding: 0; margin-left: 2px;
     }
     .pill:hover .x { display: flex; }
@@ -53,91 +56,143 @@
     .handle {
       position: fixed; z-index: 2147483000;
       width: 30px; height: 30px; border-radius: 50%;
-      background: rgba(28, 26, 24, 0.34);
-      -webkit-backdrop-filter: blur(14px) saturate(160%);
-      backdrop-filter: blur(14px) saturate(160%);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.26);
-      color: #F5F3EC; font-size: 13px; cursor: pointer;
+      background: rgba(22, 20, 19, 0.34);
+      -webkit-backdrop-filter: blur(16px) saturate(170%);
+      backdrop-filter: blur(16px) saturate(170%);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255,255,255,.16);
+      color: #F7F5F0; font-size: 13px; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       opacity: .5; transition: opacity .2s ease, background .2s ease;
     }
-    .handle:hover { opacity: 1; background: rgba(28, 26, 24, 0.6); }
+    .handle:hover { opacity: 1; background: rgba(22, 20, 19, 0.6); }
     .handle[hidden] { display: none; }
 
-    /* ---- the panel ---- */
+    /* ---- the glass panel ---- */
     .panel {
       position: fixed; z-index: 2147483001; width: 330px;
-      background: rgba(255, 255, 255, 0.92);
-      -webkit-backdrop-filter: blur(22px) saturate(180%);
-      backdrop-filter: blur(22px) saturate(180%);
+      background: rgba(250, 249, 245, 0.62);
+      -webkit-backdrop-filter: blur(30px) saturate(190%);
+      backdrop-filter: blur(30px) saturate(190%);
       border: 1px solid rgba(255, 255, 255, 0.55);
-      border-radius: 16px; box-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+      border-radius: 16px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       overflow: hidden; color: #1F1E1D; display: none;
     }
     .panel[data-open="1"] { display: block; }
-    .head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 12px 14px; background: rgba(245, 244, 238, 0.7); border-bottom: 1px solid rgba(0,0,0,.06); }
-    .head h3 { margin: 0; font-family: Copernicus, "Source Serif 4", Georgia, serif; font-size: 14px; font-weight: 600; }
-    .head .grip { cursor: grab; color: #87867F; font-size: 13px; }
-    .x2 { background: none; border: none; cursor: pointer; color: #87867F; font-size: 16px; line-height: 1; padding: 2px 4px; }
-    .x2:hover { color: #1F1E1D; }
+    .panel.dragging { transition: none; }
+
+    .head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 12px 14px; cursor: grab;
+      background: rgba(255, 255, 255, 0.34);
+      -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.45);
+      touch-action: none; user-select: none;
+    }
+    .head:active { cursor: grabbing; }
+    .head h3 { margin: 0; font-family: Copernicus, "Source Serif 4", Georgia, serif; font-size: 14px; font-weight: 600; text-shadow: 0 1px 0 rgba(255,255,255,.5); }
+    .head .grip { cursor: grab; color: #87867F; font-size: 13px; letter-spacing: -1px; }
+    .x2 { background: rgba(255,255,255,.4); border: 1px solid rgba(255,255,255,.5); border-radius: 50%;
+      width: 20px; height: 20px; cursor: pointer; color: #575653; font-size: 11px; line-height: 1; padding: 0; }
+    .x2:hover { background: rgba(255,255,255,.75); color: #1F1E1D; }
+
     .body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; max-height: 62vh; overflow-y: auto; }
     .row { display: flex; gap: 10px; align-items: flex-start; }
-    .thumb { width: 88px; height: 50px; border-radius: 8px; object-fit: cover; background: #F0EEE7; flex: 0 0 auto; border: 1px solid rgba(0,0,0,.07); }
+    .thumb { width: 88px; height: 50px; border-radius: 8px; object-fit: cover; background: rgba(255,255,255,.4); flex: 0 0 auto; border: 1px solid rgba(255,255,255,.55); }
     .meta { min-width: 0; flex: 1; }
     .title { font-size: 12.5px; font-weight: 600; line-height: 1.35; color: #1F1E1D;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-    .sub { font-size: 11px; color: #87867F; margin-top: 2px; }
+    .sub { font-size: 11px; color: #6B6A64; margin-top: 2px; }
     label { font-size: 11px; font-weight: 700; color: #575653; display: block; margin-bottom: 4px; letter-spacing: .02em; }
-    select, input[type=text] { width: 100%; padding: 9px 10px; font-size: 12.5px; color: #1F1E1D;
-      background: #fff; border: 1px solid #D9D6CC; border-radius: 9px; outline: none; font-family: inherit; }
+
+    select, input[type=text] {
+      width: 100%; padding: 9px 10px; font-size: 12.5px; color: #1F1E1D;
+      background: rgba(255, 255, 255, 0.6);
+      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.7); border-radius: 9px; outline: none; font-family: inherit;
+    }
     select:focus, input:focus { border-color: #D97757; box-shadow: 0 0 0 3px rgba(217,119,87,.28); }
-    .btn { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #D9D6CC;
-      background: #fff; color: #1F1E1D; font-size: 12.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
-    .btn:hover { border-color: #D97757; color: #8A3F24; }
-    .btn.primary { background: #D97757; border-color: #D97757; color: #fff; }
-    .btn.primary:hover { background: #C15F3C; border-color: #C15F3C; color: #fff; }
+
+    .btn {
+      width: 100%; padding: 10px 12px; border-radius: 10px;
+      background: rgba(255, 255, 255, 0.5);
+      -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      color: #1F1E1D; font-size: 12.5px; font-weight: 700; cursor: pointer; font-family: inherit;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.5);
+    }
+    .btn:hover { border-color: #D97757; color: #8A3F24; background: rgba(255,255,255,.68); }
+    .btn.primary { background: rgba(217, 119, 87, 0.9); border-color: rgba(255,255,255,.35); color: #fff;
+      box-shadow: 0 4px 14px rgba(217,119,87,.35), inset 0 1px 0 rgba(255,255,255,.28); }
+    .btn.primary:hover { background: rgba(193, 95, 60, 0.95); border-color: rgba(255,255,255,.45); color: #fff; }
     .btn:disabled { opacity: .55; cursor: not-allowed; }
     .btn.sm { padding: 7px 10px; font-size: 11.5px; width: auto; }
     .btnrow { display: flex; gap: 6px; }
     .btnrow .btn { width: auto; flex: 1; }
-    .status { border-radius: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.45;
-      background: rgba(47,125,91,.12); border: 1px solid rgba(47,125,91,.30); color: #2F7D5B; }
-    .status b { color: #235c43; }
-    .peek { border: 1px solid rgba(0,0,0,.08); border-radius: 10px; overflow: hidden; }
+
+    .status {
+      border-radius: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.45;
+      background: rgba(47, 125, 91, 0.16);
+      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+      border: 1px solid rgba(47, 125, 91, 0.34); color: #276b4e;
+    }
+    .status b { color: #1f5940; }
+
+    .peek {
+      border: 1px solid rgba(255, 255, 255, 0.55); border-radius: 10px; overflow: hidden;
+      background: rgba(255, 255, 255, 0.28);
+      -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    }
     .peek h4 { margin: 0; padding: 8px 11px; font-size: 11px; font-weight: 700; color: #575653;
-      background: rgba(245,244,238,.8); border-bottom: 1px solid rgba(0,0,0,.06); text-transform: uppercase; letter-spacing: .05em; }
+      background: rgba(255, 255, 255, 0.32); border-bottom: 1px solid rgba(255,255,255,.45);
+      text-transform: uppercase; letter-spacing: .05em; }
     .peek ul { list-style: none; margin: 0; padding: 0; max-height: 150px; overflow-y: auto; }
-    .peek li { display: flex; gap: 8px; align-items: center; padding: 7px 11px; font-size: 12px; cursor: pointer; border-bottom: 1px solid rgba(0,0,0,.05); }
+    .peek li { display: flex; gap: 8px; align-items: center; padding: 7px 11px; font-size: 12px; cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,.35); }
     .peek li:last-child { border-bottom: none; }
-    .peek li:hover { background: rgba(217,119,87,.10); }
+    .peek li:hover { background: rgba(217, 119, 87, 0.18); }
     .peek li .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .peek li .d { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px; color: #87867F; }
-    .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 9px 14px; background: rgba(245,244,238,.7); border-top: 1px solid rgba(0,0,0,.06); font-size: 11px; color: #575653; }
+    .peek li .d { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px; color: #6B6A64; }
+
+    .foot {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 9px 14px; font-size: 11px; color: #575653;
+      background: rgba(255, 255, 255, 0.28);
+      -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(255, 255, 255, 0.45);
+    }
     .foot a { color: #8A3F24; text-decoration: none; font-weight: 600; }
     .foot a:hover { text-decoration: underline; }
-    .msg { font-size: 11.5px; line-height: 1.45; min-height: 15px; color: #87867F; }
-    .msg.ok { color: #2F7D5B; } .msg.warn { color: #B4791F; } .msg.err { color: #C0392B; }
+
+    .msg { font-size: 11.5px; line-height: 1.45; min-height: 15px; color: #6B6A64; }
+    .msg.ok { color: #2F7D5B; } .msg.warn { color: #9a6512; } .msg.err { color: #C0392B; }
+
     .newrow { display: none; gap: 6px; }
     .newrow[data-open="1"] { display: flex; }
     .newrow input { flex: 1; }
     .newrow button { flex: 0 0 auto; width: auto; }
+
     .toast {
       position: fixed; z-index: 2147483002; padding: 10px 14px; border-radius: 12px;
-      background: rgba(28,26,24,0.72); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
-      color: #F5F3EC; font-size: 12.5px; font-weight: 600; box-shadow: 0 12px 34px rgba(0,0,0,.34);
+      background: rgba(22, 20, 19, 0.62);
+      -webkit-backdrop-filter: blur(18px) saturate(180%); backdrop-filter: blur(18px) saturate(180%);
+      border: 1px solid rgba(255,255,255,.18);
+      color: #F7F5F0; font-size: 12.5px; font-weight: 600;
+      box-shadow: 0 12px 34px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.14);
       opacity: 0; transform: translateY(8px); transition: all .25s ease; pointer-events: none;
     }
     .toast[data-show="1"] { opacity: 1; transform: translateY(0); }
 
-    /* graceful fallback where blur is unavailable */
+    /* graceful fallback where blur is unavailable — keep it readable */
     @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
-      .pill { background: rgba(28,26,24,0.86); }
-      .handle { background: rgba(28,26,24,0.86); opacity: .8; }
-      .panel { background: #FFFFFF; }
-      .toast { background: rgba(28,26,24,0.94); }
+      .pill { background: rgba(22,20,19,0.88); }
+      .handle { background: rgba(22,20,19,0.88); opacity: .85; }
+      .panel { background: #FAF9F5; }
+      .head, .foot { background: #F5F4EE; }
+      select, input[type=text], .btn { background: #FFFFFF; }
+      .peek, .peek h4 { background: #FFFFFF; }
+      .toast { background: rgba(22,20,19,0.95); }
     }
   `;
 
@@ -222,7 +277,7 @@
     create: $('.create'), save: $('.save'), queued: $('.queued'), resume: $('.resume'),
     watched: $('.watched'), playlist: $('.playlist'), peek: $('.peek'),
     peekTitle: $('.peekTitle'), peekList: $('.peekList'),
-    msg: $('.msg'), who: $('.who'), close: $('.x2'), grip: $('.grip')
+    msg: $('.msg'), who: $('.who'), close: $('.x2'), head: $('.head')
   };
 
   function send(msg) {
@@ -299,11 +354,12 @@
 
   // ------------------------------------------------------------ position & visibility
 
-  let pos = null;       // {left, top} once dragged
+  let pos = null;       // pill {left, top} once dragged
+  let panelPos = null;  // panel {left, top} once dragged by its header
   let hidden = false;
   let cfg = { apiBaseUrl: '', hasToken: false, lastSeriesId: '', settings: { showPill: true } };
 
-  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
   function place(el, w, h) {
     if (pos) {
@@ -326,9 +382,18 @@
   }
 
   function positionPanel() {
-    const r = pill.getBoundingClientRect();
     const pw = panel.offsetWidth || 330;
     const ph = panel.offsetHeight || 420;
+
+    // If the user has dragged the panel, keep it exactly where they put it.
+    if (panelPos) {
+      panel.style.left = clamp(panelPos.left, 8, Math.max(8, innerWidth - pw - 8)) + 'px';
+      panel.style.top = clamp(panelPos.top, 8, Math.max(8, innerHeight - ph - 8)) + 'px';
+      panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      return;
+    }
+
+    const r = pill.getBoundingClientRect();
     let left = r.right - pw;
     left = clamp(left, 8, Math.max(8, innerWidth - pw - 8));
     let top = r.top - ph - 10;              // prefer above the pill
@@ -342,43 +407,61 @@
 
   // ------------------------------------------------------------ dragging
 
-  function makeDraggable(el, onDone) {
+  function makeDraggable(el, opts = {}) {
+    const { onTap, handleSel, onMoved } = opts;
     let dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+
     el.addEventListener('pointerdown', (e) => {
-      if (e.target.closest && e.target.closest('button')) return; // don't drag from the ✕
+      if (handleSel && !(e.target.closest && e.target.closest(handleSel))) return;
+      if (e.target.closest && e.target.closest('button')) return; // never drag from a button
       const r = el.getBoundingClientRect();
       dragging = true; moved = false;
       sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
       el.classList.add('dragging');
       try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     });
+
     el.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (!moved && Math.abs(dx) + Math.abs(dy) > 4) moved = true;
       if (!moved) return;
       const r = el.getBoundingClientRect();
-      pos = { left: clamp(ox + dx, 4, innerWidth - r.width - 4), top: clamp(oy + dy, 4, innerHeight - r.height - 4) };
-      place(el, r.width, r.height);
-      if (panel.dataset.open === '1') positionPanel();
+      const next = {
+        left: clamp(ox + dx, 4, Math.max(4, innerWidth - r.width - 4)),
+        top: clamp(oy + dy, 4, Math.max(4, innerHeight - r.height - 4))
+      };
+      el.style.left = next.left + 'px';
+      el.style.top = next.top + 'px';
+      el.style.right = 'auto'; el.style.bottom = 'auto';
+      if (onMoved) onMoved(next);
+      e.preventDefault();
     });
+
     const finish = async (e) => {
       if (!dragging) return;
       dragging = false;
       el.classList.remove('dragging');
       try { el.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
       if (moved) {
-        await chrome.storage.local.set({ [POS_KEY]: pos });
-      } else if (onDone) {
-        onDone();
+        const r = el.getBoundingClientRect();
+        const finalPos = { left: r.left, top: r.top };
+        if (el === pill) { pos = finalPos; await chrome.storage.local.set({ [POS_KEY]: finalPos }); }
+        if (el === panel) { panelPos = finalPos; await chrome.storage.local.set({ [PANEL_POS_KEY]: finalPos }); }
+      } else if (onTap) {
+        onTap();
       }
     };
     el.addEventListener('pointerup', finish);
     el.addEventListener('pointercancel', finish);
   }
 
-  makeDraggable(pill, () => openPanel());
-  makeDraggable(handle, () => { hidden = false; chrome.storage.local.set({ [HIDDEN_KEY]: false }); applyVisibility(); });
+  makeDraggable(pill, { onTap: () => openPanel() });
+  makeDraggable(handle, {
+    onTap: () => { hidden = false; chrome.storage.local.set({ [HIDDEN_KEY]: false }); applyVisibility(); }
+  });
+  // The panel drags by its header (the grip / title bar), never by a button.
+  makeDraggable(panel, { handleSel: '.head' });
 
   pill.querySelector('.x').addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -600,8 +683,9 @@
   document.documentElement.appendChild(host);
 
   (async () => {
-    const stored = await chrome.storage.local.get([POS_KEY, HIDDEN_KEY]);
+    const stored = await chrome.storage.local.get([POS_KEY, PANEL_POS_KEY, HIDDEN_KEY]);
     if (stored[POS_KEY]) pos = stored[POS_KEY];
+    if (stored[PANEL_POS_KEY]) panelPos = stored[PANEL_POS_KEY];
     hidden = !!stored[HIDDEN_KEY];
     await refreshState();
     applyVisibility();
@@ -621,12 +705,13 @@
   window.addEventListener('yt-page-data-updated', onNav);
   const mo = new MutationObserver(() => { clearTimeout(mo._t); mo._t = setTimeout(onNav, 500); });
   mo.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('resize', () => applyVisibility());
+  window.addEventListener('resize', () => { applyVisibility(); if (panel.dataset.open === '1') positionPanel(); });
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes.settings) { cfg.settings = { ...cfg.settings, ...(changes.settings.newValue || {}) }; applyVisibility(); }
     if (changes[POS_KEY] && !pos) { pos = changes[POS_KEY].newValue; applyVisibility(); }
+    if (changes[PANEL_POS_KEY] && !panelPos) { panelPos = changes[PANEL_POS_KEY].newValue; if (panel.dataset.open === '1') positionPanel(); }
     if (changes[HIDDEN_KEY]) { hidden = !!changes[HIDDEN_KEY].newValue; applyVisibility(); }
   });
 
