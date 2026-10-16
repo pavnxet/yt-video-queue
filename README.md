@@ -37,6 +37,8 @@ only **your** passkey opens it.
   being lost; replay, un-watch, rename or delete any of them.
 
 **Organising**
+- **Link to any series.** Every series has its own URL (`#/s/…`) — bookmark it,
+  share it, and the browser back button works. The 🔗 Link button copies it.
 - **Rename** any video or series.
 - **Multi-select** (the *Select* button) with **Rename**, **Mark watched**,
   **Delete** and **Clear**.
