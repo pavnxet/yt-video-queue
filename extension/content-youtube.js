@@ -71,6 +71,8 @@
     /* ---- the glass panel ---- */
     .panel {
       position: fixed; z-index: 2147483001; width: 330px;
+      /* default corner: never let an unpositioned frame show top-left */
+      right: 22px; bottom: 76px;
       background: rgba(250, 249, 245, 0.62);
       -webkit-backdrop-filter: blur(30px) saturate(190%);
       backdrop-filter: blur(30px) saturate(190%);
@@ -79,7 +81,9 @@
       box-shadow: 0 24px 64px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.65);
       overflow: hidden; color: #1F1E1D; display: none;
     }
-    .panel[data-open="1"] { display: block; }
+    .panel[data-open="1"] { display: block; animation: ytq-pop .18s ease-out; }
+    @keyframes ytq-pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .panel[data-open="1"] { animation: none; } }
     .panel.dragging { transition: none; }
 
     .head {
@@ -394,15 +398,27 @@
     }
 
     const r = pill.getBoundingClientRect();
-    let left = r.right - pw;
-    left = clamp(left, 8, Math.max(8, innerWidth - pw - 8));
-    let top = r.top - ph - 10;              // prefer above the pill
-    if (top < 8) top = r.bottom + 10;       // otherwise below
-    top = clamp(top, 8, Math.max(8, innerHeight - ph - 8));
+    const left = clamp(r.right - pw, 8, Math.max(8, innerWidth - pw - 8));
     panel.style.left = left + 'px';
-    panel.style.top = top + 'px';
     panel.style.right = 'auto';
-    panel.style.bottom = 'auto';
+
+    // Pick the roomier side (this depends only on the pill, never on the panel's
+    // height, so the choice cannot flip while content loads), anchor that edge,
+    // then cap the scrollable body to the space available. The panel therefore
+    // always fits on screen and never has to move once it is shown.
+    const spaceAbove = r.top - 12;
+    const spaceBelow = innerHeight - r.bottom - 12;
+    const above = spaceAbove >= spaceBelow;
+    const CHROME = 96; // header + footer
+
+    if (above) {
+      panel.style.bottom = (innerHeight - r.top + 10) + 'px';
+      panel.style.top = 'auto';
+    } else {
+      panel.style.top = (r.bottom + 10) + 'px';
+      panel.style.bottom = 'auto';
+    }
+    els.body.style.maxHeight = Math.max(180, (above ? spaceAbove : spaceBelow) - CHROME) + 'px';
   }
 
   // ------------------------------------------------------------ dragging
@@ -584,7 +600,10 @@
 
   async function openPanel() {
     if (!fillPanel()) { showToast('Open a YouTube video first.'); return; }
+    // Show AND place it in the same synchronous block: the panel must never be
+    // painted at its default corner while the fetches below are in flight.
     panel.dataset.open = '1';
+    positionPanel();
     await refreshState();
     if (!(cfg.apiBaseUrl && cfg.hasToken)) {
       setMsg('Not connected yet. Open the extension settings and paste your API URL, or visit your queue site once.', 'warn');
