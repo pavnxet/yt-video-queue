@@ -14,6 +14,9 @@ import {
   fromBase64url,
   base64url,
   errorMessage,
+  timingSafeEqual,
+  throttle,
+  clientIp,
 } from './util';
 import { createSession, getSessionUser, deleteSession, bearer } from './session';
 import type { Env } from './types';
@@ -62,6 +65,17 @@ async function safeJson(request: Request): Promise<any> {
 
 async function saveChallenge(env: Env, kind: string, challenge: string, userId: string | null): Promise<string> {
   const id = randomToken(18);
+  // Housekeeping: a challenge is only valid for five minutes, so anything older
+  // is dead weight. Without this an unauthenticated caller could grow the table
+  // without limit by calling /auth/login/options in a loop.
+  try {
+    await db(env).execute({
+      sql: 'DELETE FROM webauthn_challenges WHERE expires_at < ?',
+      args: [nowIso()],
+    });
+  } catch {
+    /* housekeeping only — never block the ceremony on it */
+  }
   await db(env).execute({
     sql: 'INSERT INTO webauthn_challenges (id, challenge, user_id, kind, expires_at) VALUES (?, ?, ?, ?, ?)',
     args: [id, challenge, userId, kind, new Date(Date.now() + CHALLENGE_TTL_MS).toISOString()],
@@ -107,6 +121,12 @@ export async function statusHandler(request: Request, env: Env): Promise<Respons
 
 /** POST /auth/register/options */
 export async function registerOptions(request: Request, env: Env): Promise<Response> {
+  // Registration is the only other secret-guarded door, so it gets the same
+  // attempt budget as login: a handful of tries a minute, per client.
+  if (!throttle('register:' + clientIp(request), 10, 60_000)) {
+    return fail('Too many attempts. Please wait a minute and try again.', 429);
+  }
+
   const body = await safeJson(request);
   const authMode = env.AUTH_MODE || 'owner';
   const ownerRegistered = (await getConfig(env, 'owner_registered')) === '1';
@@ -117,7 +137,8 @@ export async function registerOptions(request: Request, env: Env): Promise<Respo
       return fail('Registration is closed. Only the owner passkey can sign in.', 403);
     }
     const provided = String(body.bootstrapSecret || '');
-    if (!env.BOOTSTRAP_SECRET || provided !== env.BOOTSTRAP_SECRET) {
+    // Constant-time, and an unset secret never matches anything.
+    if (!env.BOOTSTRAP_SECRET || !(await timingSafeEqual(provided, env.BOOTSTRAP_SECRET))) {
       return fail('Invalid bootstrap secret.', 403);
     }
   }
@@ -206,7 +227,11 @@ export async function registerVerify(request: Request, env: Env): Promise<Respon
 }
 
 /** POST /auth/login/options */
-export async function loginOptions(env: Env): Promise<Response> {
+export async function loginOptions(request: Request, env: Env): Promise<Response> {
+  // Unauthenticated and it writes a row, so it is the cheapest thing to flood.
+  if (!throttle('login-options:' + clientIp(request), 20, 60_000)) {
+    return fail('Too many attempts. Please wait a minute and try again.', 429);
+  }
   const ownerRegistered = (await getConfig(env, 'owner_registered')) === '1';
   if (!ownerRegistered) {
     return fail('No passkey registered yet. Register this device first.', 409);

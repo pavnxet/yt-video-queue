@@ -1,5 +1,5 @@
 import type { Env } from './types';
-import { json, fail, errorMessage } from './util';
+import { json, fail, errorMessage, timingSafeEqual, throttle, clientIp } from './util';
 import { getSessionUser, bearer } from './session';
 import { db, initSchema, ensureSchema } from './db';
 import { syncOneDuePlaylist } from './playlists';
@@ -10,6 +10,11 @@ import * as data from './data';
 // The browser aborts its own request after 12s. Answering before that with a
 // real error beats being killed at the edge, which only logs `canceled`.
 const REQUEST_DEADLINE_MS = 10_000;
+
+// Every body this API accepts is small: a title, a list of links, an assertion.
+// 512 KB is far above the largest legitimate request and far below anything
+// worth buffering.
+const MAX_BODY_BYTES = 512 * 1024;
 
 class RequestTimeout extends Error {}
 
@@ -36,6 +41,12 @@ export default {
       return new Response(null, { status: 204, headers: cors });
     }
 
+    // Refuse an oversized body before anything reads it into memory.
+    const declared = Number(request.headers.get('content-length') || 0);
+    if (declared > MAX_BODY_BYTES) {
+      return json({ error: 'Request body too large.' }, 413, cors);
+    }
+
     let res: Response;
     try {
       res = await withDeadline(route(request, env), REQUEST_DEADLINE_MS);
@@ -55,6 +66,13 @@ export default {
 
     const headers = new Headers(res.headers);
     for (const [k, v] of Object.entries(cors)) headers.set(k, v);
+    // A JSON API should never be sniffed as another type, and a response that
+    // carries a session token must not be stored by any cache along the way.
+    headers.set('X-Content-Type-Options', 'nosniff');
+    if (new URL(request.url).pathname.startsWith('/auth/')) {
+      headers.set('Cache-Control', 'no-store');
+      headers.set('Pragma', 'no-cache');
+    }
     return new Response(res.body, { status: res.status, headers });
   },
   scheduled(_event, env, ctx) {
@@ -93,7 +111,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (seg[1] === 'status' && seg.length === 2 && method === 'GET') return auth.statusHandler(request, env);
     if (seg[1] === 'register' && seg[2] === 'options' && method === 'POST') return auth.registerOptions(request, env);
     if (seg[1] === 'register' && seg[2] === 'verify' && method === 'POST') return auth.registerVerify(request, env);
-    if (seg[1] === 'login' && seg[2] === 'options' && method === 'POST') return auth.loginOptions(env);
+    if (seg[1] === 'login' && seg[2] === 'options' && method === 'POST') return auth.loginOptions(request, env);
     if (seg[1] === 'login' && seg[2] === 'verify' && method === 'POST') return auth.loginVerify(request, env);
     if (seg[1] === 'logout' && seg.length === 2 && method === 'POST') return auth.logout(request, env);
     if (seg[1] === 'me' && seg.length === 2 && method === 'GET') return auth.me(request, env);
@@ -152,7 +170,13 @@ async function adminInit(request: Request, env: Env): Promise<Response> {
   } catch {
     body = {};
   }
-  if (!env.BOOTSTRAP_SECRET || String(body.bootstrapSecret || '') !== env.BOOTSTRAP_SECRET) {
+  // The schema endpoint is secret-guarded and publicly reachable: constant-time
+  // compare, and only a few attempts a minute per client.
+  if (!throttle('admin-init:' + clientIp(request), 10, 60_000)) {
+    return fail('Too many attempts. Please wait a minute and try again.', 429);
+  }
+  if (!env.BOOTSTRAP_SECRET ||
+      !(await timingSafeEqual(String(body.bootstrapSecret || ''), env.BOOTSTRAP_SECRET))) {
     return fail('Invalid bootstrap secret.', 403);
   }
   await initSchema(env);
