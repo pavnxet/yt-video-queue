@@ -326,6 +326,7 @@
   }
 
   const setMsg = (t, k) => { els.msg.textContent = t || ''; els.msg.className = 'msg ' + (k || ''); };
+  const errText = (e) => (e && e.message) ? e.message : String(e || 'unknown error');
   function showToast(text) {
     toast.textContent = text;
     toast.dataset.show = '1';
@@ -492,7 +493,10 @@
     el.addEventListener('pointercancel', finish);
   }
 
-  makeDraggable(pill, { onTap: () => openPanel() });
+  // A rejected openPanel() must never vanish silently: report it in the panel.
+  makeDraggable(pill, {
+    onTap: () => { openPanel().catch((e) => setMsg('Could not open the panel: ' + errText(e), 'err')); }
+  });
   makeDraggable(handle, {
     onTap: () => { hidden = false; chrome.storage.local.set({ [HIDDEN_KEY]: false }); applyVisibility(); }
   });
@@ -675,10 +679,21 @@
     if (!fillPanel()) { showToast('Open a YouTube video or playlist first.'); return; }
     panel.dataset.open = '1';
     positionPanel();
-    await refreshState();
+
+    // Every step below is isolated on purpose. A throw anywhere in here used to
+    // abandon the rest of the sequence, leaving the panel half-built: the
+    // "already queued" row drawn, the series dropdown empty, and the message
+    // line still showing the static "Ready." with no hint of what failed.
+    try {
+      await refreshState();
+    } catch (e) {
+      setMsg('Could not read extension settings: ' + errText(e), 'err');
+    }
+
     if (!(cfg.apiBaseUrl && cfg.hasToken)) {
       queuedMatches = []; lookupError = ''; selectedPlaylist = null;
-      els.insights.hidden = true; els.peek.hidden = true; renderQueued();
+      els.insights.hidden = true; els.peek.hidden = true;
+      try { renderQueued(); } catch { /* cosmetic only */ }
       els.series.replaceChildren(new Option('Connect to see your series', ''));
       setMsg('Not connected yet. Open extension settings or sign in on your queue site.', 'warn');
       els.save.disabled = true; els.series.disabled = true; els.importPlaylist.disabled = true;
@@ -686,9 +701,34 @@
       return;
     }
     els.importPlaylist.disabled = false;
-    await checkQueued();
-    const list = await loadSeries();
-    const detailOk = list ? await loadSeriesDetail() : false;
+
+    try {
+      await checkQueued();
+    } catch (e) {
+      lookupError = 'Could not check whether this video is already queued.';
+      try { renderQueued(); } catch { /* cosmetic only */ }
+    }
+
+    let list = null;
+    try {
+      list = await loadSeries();
+    } catch (e) {
+      // Never leave a blank dropdown behind — say what happened instead.
+      els.series.replaceChildren(new Option('Could not load series', ''));
+      els.series.disabled = true;
+      els.save.disabled = true;
+      setMsg('Could not load series: ' + errText(e), 'err');
+    }
+
+    let detailOk = false;
+    if (list) {
+      try {
+        detailOk = await loadSeriesDetail();
+      } catch (e) {
+        setMsg('Could not load series progress: ' + errText(e), 'err');
+      }
+    }
+
     if (list && detailOk) setMsg(lookupError || (queued ? 'Already in your queue.' : 'Ready.'), lookupError ? 'warn' : queued ? 'ok' : 'muted');
     positionPanel();
     requestAnimationFrame(positionPanel);
@@ -843,7 +883,7 @@
     hidden = !!stored[HIDDEN_KEY];
     await refreshState();
     applyVisibility();
-    checkQueued();
+    checkQueued().catch(() => { /* the panel reports its own errors */ });
   })();
 
   let lastHref = location.href;
@@ -857,7 +897,10 @@
     lookupRequest++;
     detailRequest++;
     renderQueued();
-    setTimeout(() => { checkQueued(); if (panel.dataset.open === '1') openPanel(); }, 500);
+    setTimeout(() => {
+      checkQueued().catch(() => {});
+      if (panel.dataset.open === '1') openPanel().catch(() => {});
+    }, 500);
   }
   window.addEventListener('yt-navigate-finish', onNav);
   window.addEventListener('yt-page-data-updated', onNav);
@@ -872,7 +915,7 @@
       if (changes.token) cfg.hasToken = !!changes.token.newValue;
       if (changes.apiBaseUrl) cfg.apiBaseUrl = changes.apiBaseUrl.newValue || '';
       els.who.textContent = (cfg.apiBaseUrl && cfg.hasToken) ? 'Connected' : 'Not connected';
-      if (panel.dataset.open === '1') openPanel();
+      if (panel.dataset.open === '1') openPanel().catch(() => {});
     }
     if (changes[POS_KEY]) { pos = changes[POS_KEY].newValue || null; applyVisibility(); }
     if (changes[PANEL_POS_KEY]) { panelPos = changes[PANEL_POS_KEY].newValue || null; if (panel.dataset.open === '1') positionPanel(); }
@@ -881,7 +924,7 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.type === 'getVideoInfo') { sendResponse(videoInfo()); return true; }
-    if (msg && msg.type === 'openPanel') { openPanel(); sendResponse({ ok: true }); return true; }
+    if (msg && msg.type === 'openPanel') { openPanel().catch(() => {}); sendResponse({ ok: true }); return true; }
     return false;
   });
 })();
