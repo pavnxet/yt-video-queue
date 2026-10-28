@@ -5,12 +5,49 @@ import type { Env } from './types';
 let cached: Client | null = null;
 let cachedUrl = '';
 
+// Every query gets a deadline. Without one a stalled connection to Turso makes
+// the request hang until the *browser* gives up, which shows up in the Workers
+// log as `outcome: canceled` with cpuTime 0 and no exception — impossible to
+// debug. Failing in 5s instead turns that into a normal, readable error.
+const DB_TIMEOUT_MS = 5000;
+
+function guard<T>(p: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${DB_TIMEOUT_MS}ms — the database did not answer`)),
+      DB_TIMEOUT_MS,
+    );
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+/** Wrap a client so every execute/batch is bounded by DB_TIMEOUT_MS. */
+function withTimeouts(client: Client): Client {
+  const wrapped: Client = Object.create(client);
+  wrapped.execute = ((stmt: Parameters<Client['execute']>[0]) =>
+    guard(client.execute(stmt), 'db.execute')) as Client['execute'];
+  wrapped.batch = ((stmts: Parameters<Client['batch']>[0], mode?: Parameters<Client['batch']>[1]) =>
+    guard(client.batch(stmts, mode), 'db.batch')) as Client['batch'];
+  return wrapped;
+}
+
 export function db(env: Env): Client {
   if (!cached || cachedUrl !== env.TURSO_DB_URL) {
     if (!env.TURSO_DB_URL || !env.TURSO_DB_AUTH_TOKEN) {
       throw new Error('TURSO_DB_URL / TURSO_DB_AUTH_TOKEN are not configured');
     }
-    cached = createClient({ url: env.TURSO_DB_URL, authToken: env.TURSO_DB_AUTH_TOKEN });
+    cached = withTimeouts(
+      createClient({ url: env.TURSO_DB_URL, authToken: env.TURSO_DB_AUTH_TOKEN }),
+    );
     cachedUrl = env.TURSO_DB_URL;
   }
   return cached;
@@ -105,13 +142,39 @@ export const DDL: string[] = [
   )`,
 ];
 
+// Bump when DDL or a migration changes, so deployed databases re-run init once.
+const SCHEMA_VERSION = 3;
+
+/** Read PRAGMA user_version, tolerating any driver that will not report it. */
+async function schemaVersion(client: Client): Promise<number> {
+  try {
+    const res = await client.execute('PRAGMA user_version');
+    return Number(res.rows[0]?.user_version ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function initSchema(env: Env): Promise<void> {
   const client = db(env);
+  // Fast path: a fresh isolate used to re-run the whole DDL batch plus two
+  // PRAGMA scans before it could answer anything — several extra round trips
+  // on the very first request after a deploy or an idle period. One cheap read
+  // skips all of it once the database is known to be current.
+  if ((await schemaVersion(client)) >= SCHEMA_VERSION) return;
+
   // One remote transaction rather than a request per DDL statement. This also
   // leaves the Worker subrequest budget available for playlist imports.
   await client.batch(DDL, 'write');
   await migrateVideos(client);
   await migrateSeries(client);
+
+  // Best effort: if the driver rejects the write we simply re-check next time.
+  try {
+    await client.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  } catch {
+    /* not fatal */
+  }
 }
 
 /** Add playlist columns to existing databases without disturbing their data. */
