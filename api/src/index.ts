@@ -1,7 +1,9 @@
 import type { Env } from './types';
 import { json, fail, errorMessage } from './util';
 import { getSessionUser, bearer } from './session';
-import { initSchema, ensureSchema } from './db';
+import { db, initSchema, ensureSchema } from './db';
+import { syncOneDuePlaylist } from './playlists';
+import { YouTubeError } from './youtube';
 import * as auth from './auth';
 import * as data from './data';
 
@@ -23,6 +25,16 @@ export default {
     const headers = new Headers(res.headers);
     for (const [k, v] of Object.entries(cors)) headers.set(k, v);
     return new Response(res.body, { status: res.status, headers });
+  },
+  scheduled(_event, env, ctx) {
+    ctx.waitUntil((async () => {
+      if (!env.YOUTUBE_API_KEY?.trim()) return;
+      await ensureSchema(env);
+      await syncOneDuePlaylist(db(env), env.YOUTUBE_API_KEY);
+    })().catch((e) => {
+      // YouTube errors are sanitised; never log an API URL containing the key.
+      console.error('Scheduled playlist refresh failed:', e instanceof YouTubeError ? e.message : 'unexpected error');
+    }));
   },
 } satisfies ExportedHandler<Env>;
 
@@ -62,6 +74,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (!user) return fail('Unauthorized', 401);
 
   if (seg[0] === 'series') {
+    if (seg.length === 2 && seg[1] === 'import-playlist' && method === 'POST') {
+      return data.importPlaylistSeries(request, env, user);
+    }
     if (seg.length === 1) {
       if (method === 'GET') return data.listSeries(env, user);
       if (method === 'POST') return data.createSeries(request, env, user);
@@ -77,6 +92,12 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
     if (seg.length === 3 && seg[2] === 'reorder' && method === 'POST') {
       return data.reorderVideos(request, env, user, seg[1]);
+    }
+    if (seg.length === 3 && seg[2] === 'refresh-playlist' && method === 'POST') {
+      return data.refreshPlaylist(request, env, user, seg[1]);
+    }
+    if (seg.length === 3 && seg[2] === 'refresh-durations' && method === 'POST') {
+      return data.refreshDurations(request, env, user, seg[1]);
     }
   }
 

@@ -1,6 +1,6 @@
 # YT Video Queue
 
-**v1.5.0** — a personal, passkey-protected watch queue for YouTube, Telegram and
+**v1.6.0** — a personal, passkey-protected watch queue for YouTube, Telegram and
 any other web video link.
 
 Add links into ordered **series**, watch them **one by one**, and have the next
@@ -35,6 +35,37 @@ only **your** passkey opens it.
 - **Auto-advance** toggle.
 - Watched videos are kept in a collapsed **Watched (n)** section rather than
   being lost; replay, un-watch, rename or delete any of them.
+
+**Series progress and insights**
+- Progress bars on each series card and on the series page show the number and
+  percentage watched, plus how many videos remain. **Continue watching** starts
+  with an in-progress video when one exists.
+- The series insights sidebar shows video counts, in-progress videos, total
+  length, estimated watched time, remaining time, average length, longest video
+  and source breakdown. Completed videos count as fully watched; the saved
+  resume position contributes to watched time for unfinished videos.
+- Time totals use **known durations only** and state how many videos are
+  missing a duration. A YouTube video can get its duration during import, from
+  **Find missing durations**, or when played. For any source, use the video's
+  time button to set or clear its duration manually.
+
+**Importing and syncing YouTube playlists**
+- Import a public or unlisted YouTube playlist by URL or playlist ID; optionally
+  override its title. Private playlists are not supported. Imports are limited
+  to **500 playlist entries**, including duplicate and unavailable entries.
+- Linked series have **Refresh playlist**, a source link, a last-synced time,
+  error reporting and an auto-sync toggle. Automatic checks normally happen
+  about every six hours, even when the app is closed.
+- Sync appends new, available videos in playlist order. It never overwrites
+  existing titles, custom durations, watch progress or ordering, and never
+  removes a video just because it disappeared from YouTube. Duplicate entries
+  are imported once; a video you remove from the series stays removed unless you
+  choose **Restore removed**, which appends it again as unwatched. Private or
+  unavailable videos are skipped and can be added on a later refresh if they
+  become available.
+- This feature and bulk YouTube duration lookup require the optional **YouTube
+  Data API key** described below. Regular series, playback and manually set
+  durations work without it.
 
 **Organising**
 - **Link to any series.** Every series has its own URL (`#/s/…`) — bookmark it,
@@ -96,6 +127,7 @@ yt-video-queue/
 │  ├─ index.html
 │  ├─ app.js                 # SPA controller (auth, series, player, export)
 │  ├─ player.js              # YouTube IFrame player + completion detection
+│  ├─ analytics.mjs           # progress and watch-time calculations
 │  ├─ styles.css
 │  ├─ config.js             # API_BASE_URL (written at deploy time)
 │  └─ vendor/               # simplewebauthn.js, vendored (~9 KB, no CDN)
@@ -103,6 +135,9 @@ yt-video-queue/
 │  ├─ src/index.ts           # router + CORS
 │  ├─ src/auth.ts            # WebAuthn register/login + sessions
 │  ├─ src/data.ts            # series + videos CRUD
+│  ├─ src/playlists.ts       # atomic imports, sync leases and scheduled checks
+│  ├─ src/durations.ts       # paged lookup of missing YouTube durations
+│  ├─ src/youtube.ts         # YouTube Data API and duration parsing
 │  ├─ src/meta.ts            # link classification, title/thumbnail lookup
 │  ├─ src/session.ts         # opaque DB-backed sessions
 │  ├─ src/db.ts              # libSQL client + schema (auto-created)
@@ -131,8 +166,8 @@ The first paint does as little as possible:
   TLS handshake overlaps the rest of the page load.
 - Thumbnails use `loading="lazy"`, and every font is a system font — no webfonts.
 
-The remaining cost is `styles.css` (~14 KB) and `app.js` (~40 KB), both served
-from the same origin and cached by GitHub Pages.
+The application styles, scripts and analytics helpers are served from the same
+origin and cached by GitHub Pages.
 
 ---
 
@@ -172,6 +207,26 @@ Repository **variables**: `API_BASE_URL` = your Worker URL, e.g.
 > `API_BASE_URL` is public, so it is a **variable**, not a secret. It is injected
 > into `frontend/config.js` at deploy time.
 
+### Optional: enable YouTube playlist import
+
+1. In Google Cloud, create/select a project, enable **YouTube Data API v3**, and
+   create an API key. Restrict the key to the YouTube Data API. The Worker makes
+   server-side requests, so do not restrict it to browser HTTP referrers.
+2. Add the key as the repository Actions **secret** `YOUTUBE_API_KEY` (not a
+   public variable). The API deployment workflow copies it to the Worker. If the
+   repository secret is absent, the workflow leaves any existing Worker key
+   unchanged. Alternatively, from `api/` run
+   `npx wrangler secret put YOUTUBE_API_KEY` once.
+3. Redeploy the Worker and the frontend. Paste a playlist URL on the dashboard.
+
+The Worker uses the key only on the server. The YouTube API has a quota; large
+or frequent playlist checks consume more requests. The Worker cron runs every
+15 minutes and processes one due series per run. Each auto-enabled series is
+eligible again six hours after its last attempt, so many linked series, failures
+or platform delays can make checks less frequent. Manual refresh is available at
+any time. An import/refresh that fails or exceeds 500 entries makes no partial
+changes to the series.
+
 ### 4. Deploy
 
 Push to `main` (or run the two workflows from the Actions tab). Then set
@@ -193,11 +248,13 @@ Your site will be at `https://<user>.github.io/yt-video-queue/`.
 
 ```bash
 cd api
-npm install
+npm ci
 npx wrangler login            # browser approval instead of a token
 npx wrangler secret put TURSO_DB_URL
 npx wrangler secret put TURSO_DB_AUTH_TOKEN
 npx wrangler secret put BOOTSTRAP_SECRET
+# Optional, for YouTube playlist import and duration lookup:
+npx wrangler secret put YOUTUBE_API_KEY
 npx wrangler deploy
 ```
 
@@ -209,8 +266,8 @@ npx wrangler deploy
 
 ```bash
 cd api
-cp .dev.vars.example .dev.vars      # fill in TURSO_* and BOOTSTRAP_SECRET
-npm install
+cp .dev.vars.example .dev.vars      # fill in TURSO_* / BOOTSTRAP_SECRET; optional YOUTUBE_API_KEY
+npm ci
 npm run dev                          # http://localhost:8787
 ```
 
@@ -218,6 +275,20 @@ Serve the frontend with any static server, point `frontend/config.js` at
 `http://localhost:8787`, and set `RP_ID = "localhost"` /
 `EXPECTED_ORIGIN = "http://localhost:8000"` in `wrangler.toml`. WebAuthn works on
 `http://localhost` (it counts as a secure context).
+
+### Tests
+
+```bash
+cd api
+npm ci
+npm run typecheck
+npm test                             # playlist sync, migrations, analytics and routing
+npx wrangler deploy --dry-run         # validate the Worker bundle without deploying
+```
+
+Playlist tests use a local libSQL database and a mocked YouTube API, so they do
+not require credentials or use YouTube quota. Wrangler's local dev server does
+not run the production cron automatically; manual refresh works in local dev.
 
 ---
 
@@ -236,10 +307,14 @@ Serve the frontend with any static server, point `frontend/config.js` at
   video id; a `t.me` / `telegram.me` link is stored as a Telegram post and gets
   an embed URL; anything else is stored as a plain web link. Titles come from
   `og:title`, then `<title>`; thumbnails from `og:image`; YouTube titles come
-  from the public oEmbed endpoint. Nothing is sent anywhere except a plain GET
-  to the page you pasted.
+  from the public oEmbed endpoint. With a YouTube API key configured, YouTube
+  video IDs are also sent to the Data API to look up durations. Playlist import
+  and sync use the Data API instead of fetching an arbitrary user-supplied URL.
 - **Adding many links.** Each link costs one metadata lookup, so the frontend
   sends them in batches of 20. Links it cannot recognise are skipped and counted.
+  The duration lookup uses one additional batched YouTube request when a key is
+  configured. **Find missing durations** looks up YouTube videos in pages of
+  up to 500; unavailable durations can also be entered manually.
 - **Not embeddable on purpose.** Only YouTube and public Telegram posts are
   framed — private Telegram channels (`t.me/c/…`) and invite links are sent to
   the app instead. The CSP `frame-src` is kept narrow rather than opened to
@@ -249,8 +324,8 @@ Serve the frontend with any static server, point `frontend/config.js` at
 
 ## Security
 
-- The Turso token and bootstrap secret live only as Worker secrets — never in the
-  repo or the browser.
+- The Turso token, bootstrap secret and optional YouTube API key live only as
+  Worker secrets — never in the repo or the browser.
 - Parameterised SQL everywhere; ownership is checked on every series/video access.
 - WebAuthn challenges are stored server-side and deleted after a single use
   (anti-replay); the signature counter is tracked (clone detection).
@@ -284,6 +359,16 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
   refusing to embed a private-channel post. Those links are detected and open in
   the Telegram app instead; if you still see it, the link was added before v1.3,
   so remove and re-add it.
+- **Playlist import says the key is not configured** — set the optional
+  `YOUTUBE_API_KEY` Worker secret and enable YouTube Data API v3 in that Google
+  Cloud project. Check quota and API restrictions if YouTube rejects requests.
+- **A playlist doesn't sync** — it must be public or unlisted and have at most
+  500 entries. Check the error and last-synced time in the series, then use
+  **Refresh playlist**. Private/deleted videos are skipped. Cron checks can be
+  delayed if many series are due.
+- **Some watch times are missing** — unavailable or non-YouTube videos may not
+  provide a duration. Use **Find missing durations**, play a YouTube video, or
+  set a duration manually with the time button on its row.
 - **Export button opens a broken YouTube page** — YouTube's temporary playlist
   holds about 50 videos; use the `.txt` / `.csv` / `.json` downloads for the rest.
 
@@ -291,6 +376,12 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.6.0** — progress bars and a detailed series insights sidebar; public or
+  unlisted YouTube playlist import, manual and scheduled refresh, and optional
+  API-backed duration lookup. Sync preserves edits and progress, skips duplicate
+  or unavailable items, and does not restore videos deliberately removed from
+  a series. Durations can also be entered manually, and playback fills missing
+  YouTube durations. Adds migration, playlist and analytics tests.
 - **v1.5.0** — **every series has its own link.** `#/s/<seriesId>` opens that
   series directly and `#/s/<seriesId>/v/<videoId>` opens a video inside it, so
   series can be bookmarked and shared. The hash is the single source of truth, so
