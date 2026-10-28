@@ -18,6 +18,13 @@
   const PANEL_POS_KEY = 'panelPos';
   const HIDDEN_KEY = 'pillHidden';
 
+  // Stamped into the panel footer. Without it a screenshot cannot say which
+  // build produced it, so "did the reload actually take?" is unanswerable and
+  // every bug report costs a round trip to establish.
+  const BUILD = (() => {
+    try { return chrome.runtime.getManifest().version || ''; } catch { return ''; }
+  })();
+
   // Every surface is glass: translucent + blurred, with a light hairline edge
   // and an inner highlight, so the video keeps showing through.
   const STYLES = `
@@ -327,6 +334,9 @@
   }
 
   const setMsg = (t, k) => { els.msg.textContent = t || ''; els.msg.className = 'msg ' + (k || ''); };
+  const setWho = () => {
+    els.who.textContent = ((cfg.apiBaseUrl && cfg.hasToken) ? 'Connected' : 'Not connected') + (BUILD ? ' · v' + BUILD : '');
+  };
   const errText = (e) => (e && e.message) ? e.message : String(e || 'unknown error');
   function showToast(text) {
     toast.textContent = text;
@@ -594,7 +604,7 @@
     const r = await send({ type: 'state' });
     if (r && r.ok) {
       cfg = { ...cfg, ...r };
-      els.who.textContent = (cfg.apiBaseUrl && cfg.hasToken) ? 'Connected' : 'Not connected';
+      setWho();
       applyVisibility();
     }
   }
@@ -927,7 +937,7 @@
     if (changes.token || changes.apiBaseUrl) {
       if (changes.token) cfg.hasToken = !!changes.token.newValue;
       if (changes.apiBaseUrl) cfg.apiBaseUrl = changes.apiBaseUrl.newValue || '';
-      els.who.textContent = (cfg.apiBaseUrl && cfg.hasToken) ? 'Connected' : 'Not connected';
+      setWho();
       if (panel.dataset.open === '1') openPanel().catch(() => {});
     }
     if (changes[POS_KEY]) { pos = changes[POS_KEY].newValue || null; applyVisibility(); }
