@@ -26,8 +26,12 @@ jobs:
       # Write frontend/config.js from the repository variable API_BASE_URL.
       # Set it under: Settings -> Secrets and variables -> Actions -> Variables.
       - name: Write config.js and preconnect
+        # The variable is passed through the environment rather than spliced
+        # into the script text, so its contents can never be executed as shell.
+        env:
+          API_BASE_URL_VAR: ${{ vars.API_BASE_URL }}
         run: |
-          URL="${{ vars.API_BASE_URL }}"
+          URL="${API_BASE_URL_VAR}"
           URL="${URL%/}"   # tolerate a trailing slash in the variable
           if [ -z "$URL" ]; then URL="https://REPLACE_WITH_YOUR_WORKER_URL"; fi
           printf 'export const API_BASE_URL = "%s";\n' "$URL" > frontend/config.js
@@ -41,6 +45,16 @@ jobs:
           else
             sed -i "s|<!-- API_ORIGIN_PRECONNECT -->||" frontend/index.html
             echo "no API origin; preconnect skipped"
+          fi
+
+          # Narrow connect-src from "any https origin" to the API origin itself.
+          # The page holds the session token, so if a script ever got injected it
+          # should not be able to ship that token to a host of its choosing.
+          if printf '%s' "$ORIGIN" | grep -qE '^https://[^/]+$'; then
+            sed -i "s|connect-src 'self' https:|connect-src 'self' $ORIGIN|" frontend/index.html
+            echo "csp connect-src -> $ORIGIN"
+          else
+            echo "csp connect-src left broad (no usable https API origin)"
           fi
 
       - uses: actions/configure-pages@v5
