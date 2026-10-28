@@ -1,0 +1,69 @@
+{
+  "manifest_version": 3,
+  "name": "YT Video Queue — Save",
+  "version": "1.1.1",
+  "description": "Save the YouTube video you're watching straight into your personal YT Video Queue. Local, private, and yours alone.",
+  "author": "pavnxet",
+  "homepage_url": "https://github.com/pavnxet/yt-video-queue",
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "https://pavnxet.github.io/*",
+    "https://*.workers.dev/*"
+  ],
+  "optional_host_permissions": [
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "YT Video Queue — Save",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*"
+      ],
+      "js": [
+        "content-youtube.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://pavnxet.github.io/yt-video-queue/*"
+      ],
+      "js": [
+        "content-site.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "save-current-video": {
+      "suggested_key": {
+        "default": "Alt+Q"
+      },
+      "description": "Save the current YouTube video to your queue"
+    }
+  }
+}
