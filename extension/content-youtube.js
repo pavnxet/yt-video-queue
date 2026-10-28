@@ -168,6 +168,7 @@
     .peek li:hover { background: rgba(217, 119, 87, 0.18); }
     .peek li .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .peek li .d { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px; color: #6B6A64; }
+    .peek li.empty { color: #6B6A64; cursor: default; border-bottom: none; }
 
     .foot {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -652,11 +653,13 @@
       const synced = date && !Number.isNaN(date.getTime()) ? `Last synced ${date.toLocaleString()}` : 'Not synced yet';
       els.syncStatus.textContent = selectedPlaylist.lastError ? `Last refresh failed: ${selectedPlaylist.lastError}` : `${synced} · ${selectedPlaylist.autoSync ? 'checks roughly every 6 hours' : 'auto-sync off'}`;
     }
-    const next = r.videos.filter((v) => v.status !== 'done').slice(0, 5);
-    els.peek.hidden = !next.length;
-    els.peekTitle.textContent = `Next in ${r.series.title || 'this series'}`;
-    els.peekList.replaceChildren();
-    for (const video of next) {
+    // Build every row first, then reveal the box in one go. The old order set
+    // `peek.hidden = false` before filling the list, so any hiccup in between
+    // left the "Next in …" header sitting above an empty box — which is what
+    // "next in queue not loaded" looked like on screen.
+    const videos = Array.isArray(r.videos) ? r.videos : [];
+    const next = videos.filter((v) => v.status !== 'done').slice(0, 5);
+    const rows = next.map((video) => {
       const li = document.createElement('li');
       const title = document.createElement('span'); title.className = 't'; title.textContent = video.title || 'Untitled';
       li.appendChild(title);
@@ -670,8 +673,18 @@
         li.addEventListener('click', open);
         li.addEventListener('keydown', (event) => { if (event.key === 'Enter') open(); });
       }
-      els.peekList.appendChild(li);
+      return li;
+    });
+    if (!rows.length) {
+      // Never an empty box: if there is nothing to list, say which it is.
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = videos.length ? 'Nothing unwatched after this one.' : 'This series has no videos yet.';
+      rows.push(li);
     }
+    els.peekTitle.textContent = `Next in ${(r.series && r.series.title) || 'this series'}`;
+    els.peekList.replaceChildren(...rows);
+    els.peek.hidden = false;
     return true;
   }
 
