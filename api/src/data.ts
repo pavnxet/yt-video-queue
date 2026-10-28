@@ -7,6 +7,9 @@ import { lookupVideoRows } from './video-lookup';
 import { fetchYouTubeVideos, MAX_DURATION_SECONDS, YouTubeError } from './youtube';
 import type { Env, SessionUser } from './types';
 
+// Each pasted link costs an outbound metadata fetch; keep one request bounded.
+const MAX_LINKS_PER_REQUEST = 200;
+
 // ---- ownership helpers ----------------------------------------------------
 
 async function ownSeries(env: Env, userId: string, seriesId: string) {
@@ -250,6 +253,11 @@ export async function addVideos(request: Request, env: Env, user: SessionUser, s
     for (const piece of raw.split(/[\s,]+/)) if (piece) tokens.push(piece);
   }
   if (!tokens.length) return fail('No links provided.');
+  // Each link costs an outbound fetch, so an unbounded paste could fan out
+  // hundreds of subrequests from one request.
+  if (tokens.length > MAX_LINKS_PER_REQUEST) {
+    return fail(`Add at most ${MAX_LINKS_PER_REQUEST} links at a time.`, 413);
+  }
 
   // Look the links up a few at a time so a big paste still feels quick.
   const looked = await mapPool(tokens, 6, (t) => fetchMeta(t));
