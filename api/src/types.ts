@@ -3,6 +3,7 @@ export interface Env {
   TURSO_DB_URL: string;
   TURSO_DB_AUTH_TOKEN: string;
   BOOTSTRAP_SECRET: string;
+  YOUTUBE_API_KEY?: string; // optional; required for playlist sync/duration lookup
 
   // Public vars (see wrangler.toml [vars])
   RP_ID: string;

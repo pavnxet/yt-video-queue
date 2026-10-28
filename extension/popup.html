@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>YT Video Queue — Save</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  html, body { width: 360px; }
+  .wrap { display: flex; flex-direction: column; }
+  .newrow { display: flex; gap: 6px; }
+  .newrow input { flex: 1; min-width: 0; }
+  .newrow button { flex: 0 0 auto; }
+  .checkline { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 500; }
+  .checkline input { width: auto; accent-color: var(--accent); }
+  .insights { display: flex; flex-direction: column; gap: 7px; padding: 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: var(--glass-2); }
+  .insight-top { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
+  .insight-top strong { color: var(--accent-ink); }
+  .insight-time { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--ink-2); }
+  .progress { width: 100%; height: 7px; appearance: none; border: 0; border-radius: 999px; overflow: hidden; background: var(--border-strong); }
+  .progress::-webkit-progress-bar { background: var(--border-strong); border-radius: 999px; }
+  .progress::-webkit-progress-value { background: var(--accent); border-radius: 999px; }
+  .progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
+  .linked-tools { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .small-btn { padding: 7px 9px; font-size: 11px; }
+  .series-list li { padding: 0; display: block; }
+  .series-choice { width: 100%; display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; background: transparent; border: 0; color: var(--ink); text-align: left; cursor: pointer; font: inherit; }
+  .series-choice .nm { min-width: 0; }
+  details > summary { cursor: pointer; color: var(--ink-2); font-size: 11px; font-weight: 700; }
+  details .series-list { margin-top: 7px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <div class="brand"><img src="icons/icon32.png" alt=""><div><div class="name">YT Video Queue</div><div class="sub" id="status">Checking…</div></div></div>
+    <button class="icon-btn" id="settings" type="button" title="Extension settings" aria-label="Extension settings">⚙</button>
+  </header>
+
+  <section class="card" id="setup" hidden>
+    <h3>Connect your queue</h3>
+    <p>Sign in on your queue site once, or enter your API URL and session in Settings.</p>
+    <div class="row"><button class="btn primary" id="openSite" type="button">Open queue site</button><button class="btn" id="openSettings" type="button">Settings</button></div>
+  </section>
+
+  <section class="card" id="saveCard" hidden>
+    <div class="cardhead"><h3>Current video</h3></div>
+    <div class="video"><img class="thumb" id="thumb" alt=""><div class="vmeta"><div class="vtitle" id="vtitle">—</div><div class="vsub" id="vsub"></div></div></div>
+    <p>Choose a series below to save or update this video.</p>
+  </section>
+
+  <section class="card" id="playlistCard" hidden>
+    <h3>Import this playlist</h3>
+    <p>Create a linked series from the full YouTube playlist, not just the visible videos.</p>
+    <label for="playlistTitle">Series title (optional)</label>
+    <input id="playlistTitle" type="text" placeholder="Use the playlist title">
+    <label class="checkline"><input id="importAutoSync" type="checkbox" checked> Automatically check for new videos</label>
+    <button class="btn primary block" id="importPlaylist" type="button">Import playlist as a series</button>
+    <p>Public or unlisted · up to 500 entries · requires a YouTube Data API key on your Worker.</p>
+    <div class="msg" id="playlistMsg" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="card" id="noVideo" hidden>
+    <h3>No YouTube video or playlist on this tab</h3>
+    <p>Open a YouTube video or playlist, or use <b>Alt+Q</b> on a video.</p>
+  </section>
+
+  <section class="card">
+    <div class="cardhead"><h3>Your series</h3><button class="link" id="refresh" type="button">Refresh</button></div>
+    <label for="series">Selected series</label>
+    <select id="series"></select>
+    <button class="link" id="newToggle" type="button">+ Create a series</button>
+    <div class="newrow" id="newrow" hidden><input type="text" id="newname" placeholder="New series name" aria-label="New series name"><button class="btn small-btn" id="create" type="button">Create</button></div>
+
+    <div class="insights" id="insights" hidden>
+      <div class="insight-top"><span id="progressLabel"></span><strong id="progressPercent"></strong></div>
+      <progress class="progress" id="progressBar" max="100" value="0" aria-label="Series completion"></progress>
+      <div class="insight-time"><span id="remainingTime"></span><span id="totalTime"></span></div>
+      <div class="insight-time"><span id="watchedTime"></span><span id="inProgress"></span></div>
+      <p id="durationCoverage"></p>
+      <div class="linked-tools" id="linkedTools" hidden>
+        <p id="syncStatus"></p>
+        <label class="checkline"><input id="autoSync" type="checkbox"> Auto-sync playlist</label>
+        <div class="row"><button class="btn small-btn" id="refreshPlaylist" type="button">Refresh playlist</button><button class="btn small-btn" id="restorePlaylist" type="button">Restore removed</button></div>
+      </div>
+      <button class="link" id="openSeries" type="button">Open this series ↗</button>
+    </div>
+
+    <button class="btn primary block" id="save" type="button" hidden>Save video to series</button>
+    <div class="row" id="queuedActions" hidden><button class="btn small-btn" id="savePosition" type="button">Save position</button><button class="btn small-btn" id="markWatched" type="button">Mark watched</button></div>
+    <p id="videoStatus" hidden></p>
+    <div class="msg" id="msg" role="status" aria-live="polite"></div>
+    <details><summary>All series</summary><ul class="series-list" id="seriesList"></ul></details>
+  </section>
+
+  <section class="card">
+    <h3>On-page button</h3>
+    <p>Drag the YouTube pill anywhere, or hide it for a clear view.</p>
+    <div class="row"><button class="btn" id="togglePill" type="button">Hide pill</button><button class="btn" id="resetPill" type="button">Reset position</button></div>
+  </section>
+  <footer class="foot"><a href="#" id="openQueue">Open queue ↗</a><span class="muted" id="lastSaved"></span></footer>
+</div>
+<script src="shared.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,6 +1,10 @@
 import { db } from './db';
 import { json, fail, uuid, nowIso } from './util';
 import { fetchMeta, type LinkMeta } from './meta';
+import { importPlaylist as importYouTubePlaylist, syncPlaylist } from './playlists';
+import { fillMissingDurations } from './durations';
+import { lookupVideoRows } from './video-lookup';
+import { fetchYouTubeVideos, MAX_DURATION_SECONDS, YouTubeError } from './youtube';
 import type { Env, SessionUser } from './types';
 
 // ---- ownership helpers ----------------------------------------------------
@@ -27,7 +31,8 @@ async function ownVideo(env: Env, userId: string, videoId: string) {
 
 async function safeJson(request: Request): Promise<any> {
   try {
-    return await request.json();
+    const body: any = await request.json();
+    return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
   } catch {
     return {};
   }
@@ -72,7 +77,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 
 export async function listSeries(env: Env, user: SessionUser): Promise<Response> {
   const res = await db(env).execute({
-    sql: `SELECT s.id, s.title, s.description, s.position,
+    sql: `SELECT s.id, s.title, s.description, s.position, s.playlist_id,
             (SELECT COUNT(*) FROM videos v WHERE v.series_id = s.id) AS total,
             (SELECT COUNT(*) FROM videos v WHERE v.series_id = s.id AND v.status = 'done') AS done
           FROM series s
@@ -86,6 +91,7 @@ export async function listSeries(env: Env, user: SessionUser): Promise<Response>
       title: String(r.title),
       description: r.description == null ? null : String(r.description),
       position: Number(r.position),
+      playlistId: r.playlist_id == null ? null : String(r.playlist_id),
       total: Number(r.total),
       done: Number(r.done),
     })),
@@ -121,9 +127,26 @@ export async function getSeries(env: Env, user: SessionUser, seriesId: string): 
       id: String(s.id),
       title: String(s.title),
       description: s.description == null ? null : String(s.description),
+      playlist: s.playlist_id == null ? null : {
+        id: String(s.playlist_id),
+        url: `https://www.youtube.com/playlist?list=${encodeURIComponent(String(s.playlist_id))}`,
+        autoSync: Number(s.playlist_auto_sync ?? 1) === 1,
+        lastCheckedAt: s.playlist_checked_at == null ? null : String(s.playlist_checked_at),
+        lastSyncedAt: s.playlist_synced_at == null ? null : String(s.playlist_synced_at),
+        lastError: s.playlist_sync_error == null ? null : String(s.playlist_sync_error),
+      },
     },
     videos: vres.rows.map(videoJson),
   });
+}
+
+/** Find a YouTube video across this user's series without downloading every queue. */
+export async function lookupYouTubeVideo(env: Env, user: SessionUser, youtubeId: string): Promise<Response> {
+  if (!/^[A-Za-z0-9_-]{11}$/.test(youtubeId)) return fail('A valid YouTube video ID is required.');
+  const rows = await lookupVideoRows(db(env), user.id, youtubeId);
+  return json({ matches: rows.map((v) => ({
+    seriesId: String(v.series_id), seriesTitle: String(v.series_title), video: videoJson(v),
+  })) });
 }
 
 export async function patchSeries(request: Request, env: Env, user: SessionUser, seriesId: string): Promise<Response> {
@@ -133,8 +156,14 @@ export async function patchSeries(request: Request, env: Env, user: SessionUser,
   const fields: string[] = [];
   const args: any[] = [];
   if (typeof body.title === 'string') {
+    if (!body.title.trim()) return fail('Title is required.');
     fields.push('title = ?');
     args.push(body.title.trim());
+  }
+  if (typeof body.autoSync === 'boolean') {
+    if (!s.playlist_id) return fail('This series is not linked to a YouTube playlist.');
+    fields.push('playlist_auto_sync = ?');
+    args.push(body.autoSync ? 1 : 0);
   }
   if (typeof body.description === 'string') {
     fields.push('description = ?');
@@ -154,9 +183,52 @@ export async function patchSeries(request: Request, env: Env, user: SessionUser,
 export async function deleteSeries(env: Env, user: SessionUser, seriesId: string): Promise<Response> {
   const s = await ownSeries(env, user.id, seriesId);
   if (!s) return fail('Series not found.', 404);
-  await db(env).execute({ sql: 'DELETE FROM videos WHERE series_id = ?', args: [seriesId] });
-  await db(env).execute({ sql: 'DELETE FROM series WHERE id = ?', args: [seriesId] });
+  await db(env).batch([
+    { sql: 'DELETE FROM videos WHERE series_id = ?', args: [seriesId] },
+    { sql: 'DELETE FROM playlist_seen_videos WHERE series_id = ?', args: [seriesId] },
+    { sql: 'DELETE FROM series WHERE id = ?', args: [seriesId] },
+  ], 'write');
   return json({ ok: true });
+}
+
+// ---- YouTube playlists ----------------------------------------------------
+
+export async function importPlaylistSeries(request: Request, env: Env, user: SessionUser): Promise<Response> {
+  const body = await safeJson(request);
+  try {
+    const result = await importYouTubePlaylist(db(env), user.id, String(body.url || ''), env.YOUTUBE_API_KEY, {
+      title: typeof body.title === 'string' ? body.title : undefined,
+      autoSync: typeof body.autoSync === 'boolean' ? body.autoSync : true,
+    });
+    return json(result, 201);
+  } catch (e) {
+    if (e instanceof YouTubeError) return fail(e.message, e.status);
+    throw e;
+  }
+}
+
+export async function refreshPlaylist(request: Request, env: Env, user: SessionUser, seriesId: string): Promise<Response> {
+  if (!await ownSeries(env, user.id, seriesId)) return fail('Series not found.', 404);
+  const body = await safeJson(request);
+  try {
+    return json(await syncPlaylist(db(env), seriesId, env.YOUTUBE_API_KEY, undefined, { restoreRemoved: body.restoreRemoved === true }));
+  } catch (e) {
+    if (e instanceof YouTubeError) return fail(e.message, e.status);
+    throw e;
+  }
+}
+
+/** Fill missing YouTube durations in batches without overwriting hand-edited values. */
+export async function refreshDurations(request: Request, env: Env, user: SessionUser, seriesId: string): Promise<Response> {
+  if (!await ownSeries(env, user.id, seriesId)) return fail('Series not found.', 404);
+  const body = await safeJson(request);
+  const after = typeof body?.after === 'string' ? body.after : '';
+  try {
+    return json(await fillMissingDurations(db(env), seriesId, env.YOUTUBE_API_KEY, after));
+  } catch (e) {
+    if (e instanceof YouTubeError) return fail(e.message, e.status);
+    throw e;
+  }
 }
 
 // ---- videos ---------------------------------------------------------------
@@ -184,6 +256,19 @@ export async function addVideos(request: Request, env: Env, user: SessionUser, s
   const metas = looked.filter((m): m is LinkMeta => m !== null);
   if (!metas.length) return fail('No valid links found.');
 
+  // The optional API key provides duration data for newly pasted YouTube
+  // videos. Adding links must still work if that lookup or the key is missing.
+  let durations = new Map<string, number | null>();
+  const youtubeIds = metas.flatMap((m) => m.youtubeId ? [m.youtubeId] : []);
+  if (env.YOUTUBE_API_KEY && youtubeIds.length) {
+    try {
+      const details = await fetchYouTubeVideos(youtubeIds, env.YOUTUBE_API_KEY);
+      durations = new Map([...details].map(([id, video]) => [id, video.durationSeconds]));
+    } catch {
+      // Metadata is best-effort; playback can discover the duration later.
+    }
+  }
+
   const posRes = await db(env).execute({
     sql: 'SELECT COALESCE(MAX(position), -1) + 1 AS p FROM videos WHERE series_id = ?',
     args: [seriesId],
@@ -196,8 +281,8 @@ export async function addVideos(request: Request, env: Env, user: SessionUser, s
     await db(env).execute({
       sql: `INSERT INTO videos
               (id, series_id, position, youtube_id, source, url, image_url, site_name,
-               embeddable, embed_url, title_auto, title)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               embeddable, embed_url, title_auto, title, duration_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         seriesId,
@@ -211,6 +296,7 @@ export async function addVideos(request: Request, env: Env, user: SessionUser, s
         m.embedUrl,
         m.titleAuto ? 1 : 0,
         m.title,
+        m.youtubeId ? durations.get(m.youtubeId) ?? null : null,
       ],
     });
     created.push(id);
@@ -263,15 +349,24 @@ export async function patchVideo(request: Request, env: Env, user: SessionUser, 
     args.push(body.title);
     fields.push('title_auto = 0'); // renamed by hand, so it is no longer a guess
   }
-  if (typeof body.durationSeconds === 'number') {
-    fields.push('duration_seconds = ?');
-    args.push(Math.floor(body.durationSeconds));
+  if (Object.prototype.hasOwnProperty.call(body, 'durationSeconds')) {
+    if (body.durationSeconds !== null &&
+        (!Number.isSafeInteger(body.durationSeconds) || body.durationSeconds < 1 || body.durationSeconds > MAX_DURATION_SECONDS)) {
+      return fail('Duration must be a positive whole number of seconds (up to one year), or null.');
+    }
+    fields.push(body.durationIfMissing === true && body.durationSeconds !== null
+      ? 'duration_seconds = CASE WHEN duration_seconds IS NULL OR duration_seconds <= 0 THEN ? ELSE duration_seconds END'
+      : 'duration_seconds = ?');
+    args.push(body.durationSeconds);
   }
   if (!fields.length) return fail('Nothing to update.');
 
   args.push(videoId);
-  await db(env).execute({ sql: `UPDATE videos SET ${fields.join(', ')} WHERE id = ?`, args });
-  return json({ ok: true });
+  // A late progress save must not turn a just-completed (or replayed) video
+  // back into "watching" after the completion request has already arrived.
+  const guard = body.status === 'watching' ? " AND status != 'done'" : '';
+  const result = await db(env).execute({ sql: `UPDATE videos SET ${fields.join(', ')} WHERE id = ?${guard}`, args });
+  return json({ ok: true, updated: result.rowsAffected > 0 });
 }
 
 export async function deleteVideo(env: Env, user: SessionUser, videoId: string): Promise<Response> {

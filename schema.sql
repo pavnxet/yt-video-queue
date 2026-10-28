@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS series (
   title        TEXT NOT NULL,
   description  TEXT,
   position     INTEGER NOT NULL DEFAULT 0,
+  playlist_id  TEXT,                           -- linked YouTube playlist, if any
+  playlist_auto_sync INTEGER NOT NULL DEFAULT 1,
+  playlist_checked_at TEXT,                    -- last attempt (ISO UTC)
+  playlist_synced_at  TEXT,                    -- last successful sync (ISO UTC)
+  playlist_sync_error TEXT,
+  playlist_sync_started_at TEXT,                -- short-lived sync lease
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -79,6 +85,17 @@ CREATE TABLE IF NOT EXISTS videos (
 -- Databases created before v1.1 (youtube_id NOT NULL, no source/url) are rebuilt
 -- automatically by the Worker on its first request after the upgrade.
 CREATE INDEX IF NOT EXISTS idx_videos_series ON videos(series_id, position);
+CREATE INDEX IF NOT EXISTS idx_videos_youtube ON videos(youtube_id, series_id);
+
+-- Keeps deliberately removed playlist videos from being re-added on refresh.
+CREATE TABLE IF NOT EXISTS playlist_seen_videos (
+  series_id     TEXT NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+  youtube_id    TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (series_id, youtube_id)
+);
+-- Existing databases receive the playlist columns and due index automatically
+-- from the Worker on first request; CREATE TABLE IF NOT EXISTS cannot migrate them.
 
 -- Small key/value config so settings can change without a redeploy.
 CREATE TABLE IF NOT EXISTS app_config (

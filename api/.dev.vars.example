@@ -4,3 +4,5 @@
 TURSO_DB_URL="libsql://your-db-name-your-org.turso.io"
 TURSO_DB_AUTH_TOKEN="paste-a-turso-token-here"
 BOOTSTRAP_SECRET="choose-a-long-random-string"
+# Optional: enable YouTube Data API v3 in Google Cloud, then add a server API key.
+YOUTUBE_API_KEY=""

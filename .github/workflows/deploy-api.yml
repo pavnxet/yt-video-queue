@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: api
-        run: npm install
+        run: npm ci
 
       # Repository secrets required (Settings -> Secrets and variables -> Actions):
       #   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
@@ -41,3 +41,18 @@ jobs:
           TURSO_DB_URL: ${{ secrets.TURSO_DB_URL }}
           TURSO_DB_AUTH_TOKEN: ${{ secrets.TURSO_DB_AUTH_TOKEN }}
           BOOTSTRAP_SECRET: ${{ secrets.BOOTSTRAP_SECRET }}
+
+      # Optional. Do not overwrite a manually configured Worker secret when
+      # the repository secret is absent. The key never reaches the browser.
+      - name: Configure optional YouTube Data API key
+        working-directory: api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: |
+          if [ -n "$YOUTUBE_API_KEY" ]; then
+            printf '%s' "$YOUTUBE_API_KEY" | npx wrangler secret put YOUTUBE_API_KEY
+          else
+            echo "YOUTUBE_API_KEY is not set; leaving any existing Worker secret unchanged."
+          fi

@@ -6,6 +6,11 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Check one due linked playlist per invocation (normally every six hours per
+# series). Spreading work out keeps large playlists within free Worker limits.
+[triggers]
+crons = ["*/15 * * * *"]
+
 # --- Public, non-secret configuration -------------------------------------
 # Change RP_ID / EXPECTED_ORIGIN if you move to a custom domain.
 #   GitHub Pages project site -> origin https://<user>.github.io
@@ -22,6 +27,7 @@ AUTH_MODE = "owner"
 #   TURSO_DB_URL
 #   TURSO_DB_AUTH_TOKEN
 #   BOOTSTRAP_SECRET
+#   YOUTUBE_API_KEY  (optional; enables playlist sync and duration lookup)
 
 # Optional: pin to a custom domain route instead of the default workers.dev URL
 # [[routes]]

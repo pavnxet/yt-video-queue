@@ -40,7 +40,7 @@ export class QueuePlayer {
   /**
    * @param {object} opts
    * @param {string} opts.elementId   id of the <div> to replace with the iframe
-   * @param {object} opts.handlers    { onEnded, onProgress(seconds, ended), onError }
+   * @param {object} opts.handlers    { onEnded(videoId, duration), onProgress(seconds, ended, duration, videoId), onError }
    */
   constructor({ elementId, handlers = {} }) {
     this.elementId = elementId;
@@ -91,7 +91,7 @@ export class QueuePlayer {
       if (e.data === YT.PlayerState.PAUSED) this._save(false);
       if (e.data === YT.PlayerState.ENDED) {
         this._save(true);
-        this.handlers.onEnded && this.handlers.onEnded();
+        this.handlers.onEnded && this.handlers.onEnded(this.current?.id || null, this.getDuration());
       }
     }
   }
@@ -116,7 +116,7 @@ export class QueuePlayer {
     } catch {
       return;
     }
-    this.handlers.onProgress && this.handlers.onProgress(t, !!ended);
+    this.handlers.onProgress && this.handlers.onProgress(t, !!ended, this.getDuration(), this.current?.id || null);
   }
 
   getDuration() {

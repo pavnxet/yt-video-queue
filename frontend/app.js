@@ -1,7 +1,8 @@
 // app.js — the single-page controller: auth, dashboard, series, player queue.
-// v1.4
+// v1.6
 import { API_BASE_URL } from './config.js';
 import { QueuePlayer } from './player.js';
+import { calculateSeriesAnalytics, formatDuration, parseDuration, durationInputValue, MAX_DURATION_SECONDS } from './analytics.mjs';
 
 // The passkey helper is ~9 KB and is only needed to sign in, so it is loaded on
 // demand rather than on every page view. It is vendored locally — no CDN.
@@ -11,7 +12,7 @@ function passkeys() {
   return passkeyLib;
 }
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const TOKEN_KEY = 'ytq_token';
 const VIEWS = ['loading-view', 'login-view', 'dashboard-view', 'series-view', 'player-view'];
 
@@ -122,7 +123,7 @@ async function api(path, opts = {}) {
 
   // Never let a stalled request freeze the UI.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs || 12000);
   let res;
   try {
     res = await fetch(API_BASE_URL.replace(/\/+$/, '') + path, {
@@ -379,22 +380,43 @@ async function loadDashboard() {
   state.series = series;
   const list = $('#series-list');
   list.innerHTML = '';
+  $('#library-count').textContent = `${series.length} ${series.length === 1 ? 'collection' : 'collections'}`;
   if (!state.series.length) {
-    list.appendChild(el('p', 'muted', 'No series yet. Create one above.'));
+    list.appendChild(el('p', 'library-empty', 'Your library is empty. Create a series or import a playlist to get started.'));
     return;
   }
   for (const s of state.series) list.appendChild(seriesCard(s));
 }
 
 function seriesCard(s) {
-  const card = el('div', 'card series-card');
+  const card = el('article', 'card series-card');
+  const top = el('div', 'series-card-top');
+  top.appendChild(el('span', 'series-card-icon', s.playlistId ? '▶' : '▤'));
+  if (s.playlistId) top.appendChild(el('span', 'series-card-kind', 'YouTube playlist'));
+  card.appendChild(top);
   card.appendChild(el('h3', null, s.title));
-  if (s.description) card.appendChild(el('p', 'muted', s.description));
-  card.appendChild(el('p', 'muted', `${s.done} / ${s.total} watched`));
+  if (s.description) card.appendChild(el('p', 'series-card-description', s.description));
+
+  const total = Number(s.total) || 0;
+  const done = Math.min(total, Math.max(0, Number(s.done) || 0));
+  const percent = total ? Math.round(done / total * 100) : 0;
+  const progress = el('div', 'card-progress');
+  const labels = el('div', 'card-progress-labels');
+  labels.appendChild(el('span', null, `${done} / ${total} watched`));
+  labels.appendChild(el('span', null, `${percent}%`));
+  progress.appendChild(labels);
+  const bar = document.createElement('progress');
+  bar.className = 'progress-bar';
+  bar.max = 100;
+  bar.value = percent;
+  bar.setAttribute('aria-label', `${s.title} completion`);
+  bar.setAttribute('aria-valuetext', total ? `${done} of ${total} watched; ${total - done} remaining` : 'No videos yet');
+  progress.appendChild(bar);
+  progress.appendChild(el('p', 'hint card-remaining', total ? `${total - done} ${total - done === 1 ? 'video' : 'videos'} left` : 'Ready for your first video'));
+  card.appendChild(progress);
 
   const row = el('div', 'row-buttons');
-
-  const open = el('button', 'primary', 'Open');
+  const open = el('button', 'primary', 'Open series →');
   open.onclick = () => goToSeries(s.id);
   row.appendChild(open);
 
@@ -415,7 +437,6 @@ function seriesCard(s) {
     }
   };
   row.appendChild(del);
-
   card.appendChild(row);
   return card;
 }
@@ -438,11 +459,78 @@ function watchedVideos() {
   return state.videos.filter((v) => v.status === 'done');
 }
 
-function renderSeries() {
-  $('#series-title-heading').textContent = state.currentSeries.title;
-  const watched = watchedVideos();
-  $('#series-progress').textContent = `${watched.length} / ${state.videos.length} watched`;
+function readableDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
 
+// Update the overview independently of the list so playback progress does not
+// rebuild rows (or steal focus) every five seconds.
+function renderSeriesOverview() {
+  if (!state.currentSeries) return;
+  const stats = calculateSeriesAnalytics(state.videos);
+  $('#series-title-heading').textContent = state.currentSeries.title;
+  $('#series-progress').textContent = `${stats.watched} of ${stats.total} watched · ${stats.remaining} left`;
+  $('#series-percent').textContent = `${stats.completionPercent}% complete`;
+  const bar = $('#series-progress-bar');
+  bar.value = stats.completionPercent;
+  bar.setAttribute('aria-valuetext', stats.total
+    ? `${stats.watched} of ${stats.total} videos watched; ${stats.remaining} remaining`
+    : 'No videos yet');
+  $('#queue-count').textContent = `${stats.remaining} ${stats.remaining === 1 ? 'video' : 'videos'} left`;
+  const playButton = $('#play-btn');
+  playButton.disabled = stats.total === 0;
+  playButton.textContent = stats.inProgress ? '▶ Continue watching' : stats.remaining ? '▶ Play series' : '▶ Replay';
+
+  $('#analytics-percent').textContent = `${stats.completionPercent}%`;
+  $('#analytics-total').textContent = String(stats.total);
+  $('#analytics-watched').textContent = String(stats.watched);
+  $('#analytics-remaining').textContent = String(stats.remaining);
+  $('#analytics-in-progress').textContent = stats.inProgress
+    ? `${stats.inProgress} ${stats.inProgress === 1 ? 'video' : 'videos'} in progress`
+    : 'No videos in progress';
+  const time = (value) => stats.knownDurations ? formatDuration(value) : '—';
+  $('#analytics-total-time').textContent = time(stats.totalSeconds);
+  $('#analytics-watched-time').textContent = time(stats.watchedSeconds);
+  $('#analytics-remaining-time').textContent = time(stats.remainingSeconds);
+  $('#analytics-average-time').textContent = time(stats.averageSeconds);
+  $('#analytics-coverage').textContent = !stats.total
+    ? 'Add videos to see your watch-time breakdown.'
+    : !stats.knownDurations
+      ? 'No durations yet. Use a video’s time button to add one, or find missing YouTube durations.'
+      : `${stats.knownDurations} of ${stats.total} video durations known${stats.unknownDurations ? '; unknown lengths are excluded' : ''}. Completed videos count as fully watched.`;
+  $('#refresh-durations-btn').hidden = !stats.missingYouTubeDurations;
+  const longest = $('#analytics-longest-wrap');
+  longest.hidden = !stats.longest;
+  if (stats.longest) {
+    $('#analytics-longest').textContent = `${stats.longest.title} · ${formatDuration(stats.longest.durationSeconds)}`;
+    $('#analytics-longest').title = stats.longest.title;
+  }
+  const sources = [];
+  if (stats.sources.youtube) sources.push(`${stats.sources.youtube} YouTube`);
+  if (stats.sources.telegram) sources.push(`${stats.sources.telegram} Telegram`);
+  if (stats.sources.other) sources.push(`${stats.sources.other} other`);
+  $('#analytics-sources').textContent = sources.join(' · ');
+
+  const playlist = state.currentSeries.playlist;
+  $('#playlist-tools').hidden = !playlist;
+  if (playlist) {
+    $('#playlist-source').href = playlist.url;
+    $('#playlist-auto-sync').checked = !!playlist.autoSync;
+    const synced = readableDate(playlist.lastSyncedAt);
+    $('#playlist-sync-status').textContent = (synced ? `Last synced ${synced}` : 'Not synced yet') +
+      (playlist.autoSync ? ' · Checks roughly every 6 hours' : ' · Auto-sync off');
+    $('#playlist-sync-error').hidden = !playlist.lastError;
+    $('#playlist-sync-error').textContent = playlist.lastError ? `Last refresh failed: ${playlist.lastError}` : '';
+  }
+}
+
+function renderSeries() {
+  if (!state.currentSeries) return;
+  renderSeriesOverview();
+  const watched = watchedVideos();
   const active = activeVideos();
 
   const ol = $('#video-list');
@@ -519,6 +607,13 @@ function videoRow(v, index) {
     main.appendChild(el('span', 'src-chip', v.siteName || hostOf(v.url) || v.source));
   }
   if (v.titleAuto) main.appendChild(el('span', 'auto-tag', 'auto'));
+  const hasDuration = Number(v.durationSeconds) > 0;
+  const duration = el('button', 'duration-chip', hasDuration ? `◷ ${formatDuration(v.durationSeconds)}` : '◷ Set time');
+  duration.type = 'button';
+  duration.title = hasDuration ? 'Edit video duration' : 'Set video duration';
+  duration.setAttribute('aria-label', `${duration.title} for ${label}`);
+  duration.onclick = () => openDuration(v);
+  main.appendChild(duration);
   li.appendChild(main);
 
   const actions = el('div', 'row-actions');
@@ -577,12 +672,17 @@ async function toggleDone(v) {
     return toast('Could not update: ' + (e.message || e));
   }
   v.status = next;
-  if (next === 'done') v.watchedAt = new Date().toISOString();
+  v.resumeSeconds = 0;
+  v.watchedAt = next === 'done' ? new Date().toISOString() : null;
   renderSeries();
 }
 
 async function removeVideo(id) {
-  if (!confirm('Remove this video from the series?')) return;
+  const video = state.videos.find((item) => item.id === id);
+  const message = state.currentSeries?.playlist && video?.youtubeId
+    ? 'Remove this video? Playlist refreshes will not add it again unless you choose Restore removed.'
+    : 'Remove this video from the series?';
+  if (!confirm(message)) return;
   try {
     await api('/videos/' + id, { method: 'DELETE' });
   } catch (e) {
@@ -611,6 +711,48 @@ function renameVideo(v) {
       renderSeries();
     },
   });
+}
+
+let durationTarget = null;
+
+function openDuration(video) {
+  durationTarget = video;
+  $('#duration-video-name').textContent = video.title || video.youtubeId || video.url || 'Untitled';
+  $('#duration-input').value = durationInputValue(video.durationSeconds);
+  $('#duration-error').hidden = true;
+  $('#duration-error').textContent = '';
+  $('#duration-modal').hidden = false;
+  setTimeout(() => $('#duration-input').focus(), 30);
+}
+
+function closeDuration() {
+  $('#duration-modal').hidden = true;
+  durationTarget = null;
+}
+
+async function saveDuration() {
+  const video = durationTarget;
+  if (!video) return;
+  const seconds = parseDuration($('#duration-input').value);
+  if (Number.isNaN(seconds)) {
+    $('#duration-error').textContent = 'Enter a positive duration as seconds, M:SS or H:MM:SS (up to one year).';
+    $('#duration-error').hidden = false;
+    return;
+  }
+  const button = $('#duration-save');
+  button.disabled = true;
+  try {
+    await api('/videos/' + video.id, { method: 'PATCH', body: { durationSeconds: seconds } });
+    video.durationSeconds = seconds;
+    closeDuration();
+    renderSeries();
+    toast(seconds == null ? 'Duration cleared.' : 'Duration saved.');
+  } catch (e) {
+    $('#duration-error').textContent = 'Could not save: ' + (e.message || e);
+    $('#duration-error').hidden = false;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renameSeries() {
@@ -1030,6 +1172,7 @@ async function bulkMarkWatched() {
         await api('/videos/' + v.id, { method: 'PATCH', body: { status: 'done', resumeSeconds: 0 } });
         v.status = 'done';
         v.resumeSeconds = 0;
+        v.watchedAt = new Date().toISOString();
       } catch {
         failed += 1;
       }
@@ -1043,7 +1186,8 @@ async function bulkMarkWatched() {
 async function bulkDelete() {
   const items = bulkItems();
   if (!items.length) return;
-  if (!confirm(`Remove ${items.length} video${items.length > 1 ? 's' : ''} from this series?`)) return;
+  const playlistNote = state.currentSeries?.playlist ? ' Playlist refreshes will not restore removed videos automatically.' : '';
+  if (!confirm(`Remove ${items.length} video${items.length > 1 ? 's' : ''} from this series?${playlistNote}`)) return;
   let failed = 0;
   const gone = new Set();
   await Promise.all(
@@ -1186,8 +1330,8 @@ async function ensurePlayer() {
   player = new QueuePlayer({
     elementId: 'yt-player',
     handlers: {
-      onEnded: () => onVideoEnded(),
-      onProgress: (t) => saveProgress(t),
+      onEnded: (videoId, duration) => onVideoEnded(videoId, duration),
+      onProgress: (t, ended, duration, videoId) => saveProgress(t, ended, duration, videoId),
       onError: () => {
         $('#now-progress').textContent =
           "This video can't be played — it may be private, removed or blocked in your region. Press Next to skip.";
@@ -1206,7 +1350,7 @@ function currentVideo() {
 // to the first remaining one so playback never gets stuck, and returns null
 // only when nothing is left.
 function nextAfter(video) {
-  const list = activeVideos();
+  const list = activeVideos().filter((v) => !video || v.id !== video.id);
   if (!list.length) return null;
   if (!video) return list[0];
   const pos = indexInSeries(video);
@@ -1313,35 +1457,68 @@ function updateUpNext() {
   $('#up-next').textContent = n ? 'Up next: ' + (n.title || n.youtubeId) : 'Up next: — end of series —';
 }
 
-async function saveProgress(t) {
-  const v = currentVideo();
+async function saveProgress(t, ended, duration, videoId) {
+  // Completion has its own atomic save; a concurrent "watching" request must
+  // never undo it. Keep the original video ID when async requests overlap.
+  if (ended) return;
+  const v = videoId ? state.videos.find((item) => item.id === videoId) : currentVideo();
   if (!v) return;
+  const body = {};
+  if (v.status !== 'done') {
+    body.status = 'watching';
+    body.resumeSeconds = Math.max(0, Math.floor(t || 0));
+  }
+  if (!(Number(v.durationSeconds) > 0) && Number.isSafeInteger(duration) && duration > 0 && duration <= MAX_DURATION_SECONDS) {
+    body.durationSeconds = duration;
+    body.durationIfMissing = true;
+  }
+  if (!Object.keys(body).length) return;
   try {
-    await api('/videos/' + v.id, { method: 'PATCH', body: { status: 'watching', resumeSeconds: t } });
-    v.resumeSeconds = t;
-    if (v.status !== 'done') v.status = 'watching';
+    await api('/videos/' + v.id, { method: 'PATCH', body });
+    const statusChanged = v.status === 'todo' && body.status;
+    if (v.status !== 'done' && body.status) {
+      v.resumeSeconds = body.resumeSeconds;
+      v.status = 'watching';
+    }
+    // Do not overwrite a duration edited while this request was in flight.
+    const durationChanged = body.durationSeconds && !(Number(v.durationSeconds) > 0);
+    if (durationChanged) v.durationSeconds = body.durationSeconds;
+    if (state.videos.includes(v)) {
+      if (statusChanged || durationChanged) renderSeries();
+      else renderSeriesOverview();
+    }
   } catch {
     /* progress saving is best-effort */
   }
 }
 
-async function markDone(v) {
-  if (!v) return;
+async function markDone(v, duration) {
+  if (!v) return false;
+  const body = { status: 'done', resumeSeconds: 0 };
+  const playerDuration = duration || (player && player.current?.id === v.id ? player.getDuration() : 0);
+  if (!(Number(v.durationSeconds) > 0) && Number.isSafeInteger(playerDuration) && playerDuration > 0 && playerDuration <= MAX_DURATION_SECONDS) {
+    body.durationSeconds = playerDuration;
+    body.durationIfMissing = true;
+  }
   try {
-    await api('/videos/' + v.id, { method: 'PATCH', body: { status: 'done', resumeSeconds: 0 } });
+    await api('/videos/' + v.id, { method: 'PATCH', body });
     v.status = 'done';
     v.resumeSeconds = 0;
+    if (body.durationSeconds && !(Number(v.durationSeconds) > 0)) v.durationSeconds = body.durationSeconds;
     v.watchedAt = new Date().toISOString();
-  } catch {
-    /* ignore — the UI still advances */
+  } catch (e) {
+    toast('Could not mark watched: ' + (e.message || e));
+    return false;
   }
-  renderSeries(); // keep the (hidden) series list in sync with what we just watched
+  if (state.videos.includes(v)) renderSeries();
+  return true;
 }
 
-async function onVideoEnded() {
-  const v = currentVideo();
+async function onVideoEnded(videoId, duration) {
+  const v = videoId ? state.videos.find((item) => item.id === videoId) : currentVideo();
+  if (!v || v.id !== state.currentVideoId) return;
   const n = nextAfter(v);
-  await markDone(v);
+  if (!await markDone(v, duration)) return;
   if (state.autoplay && n) await playVideo(n);
   else updateUpNext();
 }
@@ -1350,7 +1527,7 @@ async function onVideoEnded() {
 async function markDoneAndAdvance() {
   const v = currentVideo();
   const n = nextAfter(v);
-  await markDone(v);
+  if (!await markDone(v)) return;
   if (n) await playVideo(n);
   else updateUpNext();
 }
@@ -1365,8 +1542,109 @@ async function goNext() {
   if (n) await playVideo(n);
 }
 
+// ----------------------------------------------------------- playlist sync
+async function reloadCurrentSeries(id) {
+  const data = await api('/series/' + id);
+  if (!state.currentSeries || state.currentSeries.id !== id || parseHash().seriesId !== id) return;
+  state.currentSeries = data.series;
+  state.videos = data.videos;
+  const ids = new Set(state.videos.map((v) => v.id));
+  state.selected = new Set([...state.selected].filter((selected) => ids.has(selected)));
+  renderSeries();
+}
+
+function playlistResultText(result, restoring = false) {
+  const added = Number(result.added) || 0;
+  const bits = [added ? `Added ${added} ${restoring ? '' : 'new '}${added === 1 ? 'video' : 'videos'}` : 'No new videos'];
+  if (result.unavailable) bits.push(`${result.unavailable} unavailable`);
+  if (result.duplicates) bits.push(`${result.duplicates} duplicate ${result.duplicates === 1 ? 'entry' : 'entries'} skipped`);
+  return bits.join(' · ') + '.';
+}
+
+async function refreshLinkedPlaylist(restoreRemoved = false) {
+  if (!state.currentSeries?.playlist) return;
+  if (restoreRemoved && !confirm('Re-add removed videos that are still in the playlist? They will be appended as unwatched videos.')) return;
+  const id = state.currentSeries.id;
+  const refresh = $('#refresh-playlist-btn');
+  const restore = $('#restore-playlist-btn');
+  refresh.disabled = true;
+  restore.disabled = true;
+  const button = restoreRemoved ? restore : refresh;
+  button.textContent = restoreRemoved ? 'Restoring…' : 'Refreshing…';
+  try {
+    const result = await api('/series/' + id + '/refresh-playlist', {
+      method: 'POST', body: { restoreRemoved }, timeoutMs: 180000,
+    });
+    await reloadCurrentSeries(id);
+    toast(restoreRemoved && !result.added ? 'No removed videos to restore.' : playlistResultText(result, restoreRemoved));
+  } catch (e) {
+    // Reload the recorded error, but don't navigate back if the user left.
+    try { await reloadCurrentSeries(id); } catch {}
+    toast('Could not refresh playlist: ' + (e.message || e));
+  } finally {
+    refresh.disabled = false;
+    restore.disabled = false;
+    refresh.textContent = '↻ Refresh playlist';
+    restore.textContent = 'Restore removed';
+  }
+}
+
+async function setPlaylistAutoSync(enabled) {
+  if (!state.currentSeries?.playlist) return;
+  const series = state.currentSeries;
+  const checkbox = $('#playlist-auto-sync');
+  checkbox.disabled = true;
+  try {
+    await api('/series/' + series.id, { method: 'PATCH', body: { autoSync: enabled } });
+    series.playlist.autoSync = enabled;
+    if (state.currentSeries === series) renderSeriesOverview();
+    toast(enabled ? 'Automatic playlist checks enabled.' : 'Automatic playlist checks paused.');
+  } catch (e) {
+    if (state.currentSeries === series) checkbox.checked = !enabled;
+    toast('Could not update auto-sync: ' + (e.message || e));
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
+async function findMissingDurations() {
+  if (!state.currentSeries) return;
+  const id = state.currentSeries.id;
+  const button = $('#refresh-durations-btn');
+  button.disabled = true;
+  button.textContent = 'Finding durations…';
+  let updated = 0;
+  let attempted = 0;
+  try {
+    // Page by stable video ID so unavailable videos do not block later pages.
+    let cursor = '';
+    do {
+      const result = await api('/series/' + id + '/refresh-durations', {
+        method: 'POST', body: { after: cursor }, timeoutMs: 180000,
+      });
+      updated += Number(result.updated) || 0;
+      attempted += Number(result.attempted) || 0;
+      if (result.nextCursor && result.nextCursor <= cursor) throw new Error('Invalid duration lookup cursor.');
+      cursor = result.nextCursor || '';
+      if (cursor) button.textContent = `Finding durations… (${attempted} checked)`;
+    } while (cursor);
+    await reloadCurrentSeries(id);
+    const remaining = state.currentSeries?.id === id ? calculateSeriesAnalytics(state.videos).missingYouTubeDurations : 0;
+    toast(updated
+      ? `Updated ${updated} ${updated === 1 ? 'duration' : 'durations'}${remaining ? ` · ${remaining} still unknown` : ''}.`
+      : 'No more durations available from YouTube. You can set them manually.');
+  } catch (e) {
+    try { await reloadCurrentSeries(id); } catch {}
+    toast((updated ? `Updated ${updated} before the lookup stopped. ` : '') + 'Could not find durations: ' + (e.message || e));
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Find missing durations';
+  }
+}
+
 // -------------------------------------------------------------- event wiring
 function closeTopModal() {
+  if (!$('#duration-modal').hidden) return closeDuration();
   if (!$('#bulk-modal').hidden) return closeBulkRename();
   if (!$('#export-modal').hidden) return closeExport();
   if (!$('#modal').hidden) return closeModal();
@@ -1431,6 +1709,39 @@ function wireEvents() {
     }
   };
 
+  $('#import-playlist-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const url = $('#playlist-url').value.trim();
+    if (!url) return;
+    const button = $('#playlist-import-btn');
+    const error = $('#playlist-import-error');
+    error.hidden = true;
+    error.textContent = '';
+    button.disabled = true;
+    button.textContent = 'Importing playlist…';
+    try {
+      const result = await api('/series/import-playlist', {
+        method: 'POST', timeoutMs: 180000,
+        body: { url, title: $('#playlist-title').value.trim(), autoSync: $('#playlist-import-auto').checked },
+      });
+      $('#playlist-url').value = '';
+      $('#playlist-title').value = '';
+      goToSeries(result.id);
+      toast(playlistResultText(result));
+    } catch (err) {
+      error.textContent = 'Could not import playlist: ' + (err.message || err);
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Import playlist ↗';
+    }
+  };
+
+  $('#refresh-playlist-btn').onclick = () => refreshLinkedPlaylist();
+  $('#restore-playlist-btn').onclick = () => refreshLinkedPlaylist(true);
+  $('#playlist-auto-sync').onchange = (e) => setPlaylistAutoSync(e.target.checked);
+  $('#refresh-durations-btn').onclick = () => findMissingDurations();
+
   $('#add-videos-form').onsubmit = async (e) => {
     e.preventDefault();
     const raw = $('#video-links').value.trim();
@@ -1449,6 +1760,7 @@ function wireEvents() {
         const chunk = tokens.slice(i, i + BATCH).join('\n');
         const res = await api('/series/' + state.currentSeries.id + '/videos', {
           method: 'POST',
+          timeoutMs: 90000,
           body: { urls: chunk },
         });
         added += res && res.added ? res.added : 0;
@@ -1492,7 +1804,7 @@ function wireEvents() {
 
   $('#play-btn').onclick = () => {
     const list = activeVideos();
-    const v = list[0] || state.videos[0];
+    const v = list.find((video) => video.status === 'watching') || list[0] || state.videos[0];
     if (v) openPlayer(v.id);
   };
 
@@ -1549,6 +1861,13 @@ function wireEvents() {
   $('#export-json').onclick = () => exportJson();
   $('#export-modal').onclick = (e) => {
     if (e.target === $('#export-modal')) closeExport();
+  };
+
+  // duration modal
+  $('#duration-form').onsubmit = (e) => { e.preventDefault(); saveDuration(); };
+  $('#duration-cancel').onclick = () => closeDuration();
+  $('#duration-modal').onclick = (e) => {
+    if (e.target === $('#duration-modal')) closeDuration();
   };
 
   // rename modal

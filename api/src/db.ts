@@ -78,12 +78,27 @@ export const DDL: string[] = [
     title TEXT NOT NULL,
     description TEXT,
     position INTEGER NOT NULL DEFAULT 0,
+    playlist_id TEXT,
+    playlist_auto_sync INTEGER NOT NULL DEFAULT 1,
+    playlist_checked_at TEXT,
+    playlist_synced_at TEXT,
+    playlist_sync_error TEXT,
+    playlist_sync_started_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_series_user ON series(user_id, position)`,
   VIDEOS_TABLE,
   `CREATE INDEX IF NOT EXISTS idx_videos_series ON videos(series_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_videos_youtube ON videos(youtube_id, series_id)`,
+  // Remember imported IDs even if the user removes a video. A refresh should
+  // add genuinely new uploads, not resurrect things deliberately removed.
+  `CREATE TABLE IF NOT EXISTS playlist_seen_videos (
+    series_id TEXT NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+    youtube_id TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (series_id, youtube_id)
+  )`,
   `CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -92,10 +107,38 @@ export const DDL: string[] = [
 
 export async function initSchema(env: Env): Promise<void> {
   const client = db(env);
-  for (const stmt of DDL) {
-    await client.execute(stmt);
-  }
+  // One remote transaction rather than a request per DDL statement. This also
+  // leaves the Worker subrequest budget available for playlist imports.
+  await client.batch(DDL, 'write');
   await migrateVideos(client);
+  await migrateSeries(client);
+}
+
+/** Add playlist columns to existing databases without disturbing their data. */
+export async function migrateSeries(client: Client): Promise<void> {
+  const info = await client.execute('PRAGMA table_info(series)');
+  const cols = new Set(info.rows.map((r) => String(r.name)));
+  const additions: Array<[string, string]> = [
+    ['playlist_id', 'TEXT'],
+    ['playlist_auto_sync', 'INTEGER NOT NULL DEFAULT 1'],
+    ['playlist_checked_at', 'TEXT'],
+    ['playlist_synced_at', 'TEXT'],
+    ['playlist_sync_error', 'TEXT'],
+    ['playlist_sync_started_at', 'TEXT'],
+  ];
+  for (const [name, definition] of additions) {
+    if (cols.has(name)) continue;
+    try {
+      await client.execute(`ALTER TABLE series ADD COLUMN ${name} ${definition}`);
+    } catch (e) {
+      // Two new Worker isolates can race to migrate the same database. Only
+      // ignore the specific duplicate-column race; real failures must surface.
+      if (!/duplicate column name/i.test(e instanceof Error ? e.message : String(e))) throw e;
+    }
+  }
+  await client.execute(
+    'CREATE INDEX IF NOT EXISTS idx_series_playlist_due ON series(playlist_auto_sync, playlist_checked_at)',
+  );
 }
 
 // Run the DDL at most once per isolate (the first request after a deploy creates
@@ -118,7 +161,7 @@ export function ensureSchema(env: Env): Promise<void> {
  * NOT NULL constraint, so databases created before v1.1 are rebuilt once here —
  * existing rows keep their ids, titles and watch state, and gain a url.
  */
-async function migrateVideos(client: Client): Promise<void> {
+export async function migrateVideos(client: Client): Promise<void> {
   const info = await client.execute('PRAGMA table_info(videos)');
   const cols = info.rows.map((r) => String(r.name));
   if (cols.length === 0 || cols.includes('source')) return; // fresh or already migrated
@@ -139,4 +182,5 @@ async function migrateVideos(client: Client): Promise<void> {
   await client.execute('DROP TABLE videos');
   await client.execute('ALTER TABLE videos_new RENAME TO videos');
   await client.execute('CREATE INDEX IF NOT EXISTS idx_videos_series ON videos(series_id, position)');
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_videos_youtube ON videos(youtube_id, series_id)');
 }

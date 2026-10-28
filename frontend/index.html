@@ -49,12 +49,29 @@
 
     <!-- ---------- Dashboard ---------- -->
     <section id="dashboard-view" class="view" hidden>
-      <h2>Your series</h2>
-      <form id="create-series-form" class="card inline-form">
-        <input id="series-title" placeholder="New series title" required>
-        <input id="series-desc" placeholder="Description (optional)">
-        <button class="primary" type="submit">Add series</button>
-      </form>
+      <div class="page-heading">
+        <p class="eyebrow">YOUR WATCHING SPACE</p>
+        <h2>Your series</h2>
+        <p class="muted">Keep everything you want to watch in one place.</p>
+      </div>
+      <div class="dashboard-create-grid">
+        <form id="create-series-form" class="card create-card">
+          <div class="create-card-title"><span class="create-icon" aria-hidden="true">+</span><div><h3>New series</h3><p class="hint">Make a queue of your own.</p></div></div>
+          <label class="field">Series title<input id="series-title" placeholder="e.g. Things to learn" required></label>
+          <label class="field"><span>Description <span class="optional">optional</span></span><input id="series-desc" placeholder="What is this series about?"></label>
+          <button class="primary" type="submit">Create series</button>
+        </form>
+        <form id="import-playlist-form" class="card create-card playlist-import-card">
+          <div class="create-card-title"><span class="create-icon youtube-icon" aria-hidden="true">▶</span><div><h3>Import a playlist</h3><p class="hint">Bring a YouTube playlist into your library.</p></div></div>
+          <label class="field">YouTube playlist URL or ID<input id="playlist-url" type="text" autocomplete="off" placeholder="https://youtube.com/playlist?list=…" required></label>
+          <label class="field"><span>Series title <span class="optional">optional</span></span><input id="playlist-title" placeholder="Use the playlist title"></label>
+          <label class="check import-auto"><input id="playlist-import-auto" type="checkbox" checked> Automatically check for new videos</label>
+          <p class="hint">Public or unlisted playlists up to 500 entries. Requires a YouTube Data API key.</p>
+          <p id="playlist-import-error" class="form-error" role="alert" hidden></p>
+          <button id="playlist-import-btn" class="ghost" type="submit">Import playlist <span aria-hidden="true">↗</span></button>
+        </form>
+      </div>
+      <div class="library-heading"><h3 class="section-label">Your library</h3><span id="library-count" class="hint"></span></div>
       <div id="series-list" class="grid"></div>
     </section>
 
@@ -63,52 +80,100 @@
       <button id="back-to-dash" class="ghost">&larr; All series</button>
 
       <div class="series-head card">
-        <div class="series-title-wrap">
-          <h2 id="series-title-heading"></h2>
-          <button id="rename-series-btn" class="icon-btn" title="Rename series" aria-label="Rename series">✎</button>
+        <div class="series-head-top">
+          <div class="series-title-group">
+            <p class="eyebrow">YOUR SERIES</p>
+            <div class="series-title-wrap">
+              <h2 id="series-title-heading"></h2>
+              <button id="rename-series-btn" class="icon-btn" type="button" title="Rename series" aria-label="Rename series">✎</button>
+            </div>
+          </div>
+          <button id="play-btn" class="primary" type="button">▶ Play</button>
         </div>
-        <p id="series-progress" class="muted"></p>
-        <button id="play-btn" class="primary">▶ Play</button>
-        <div class="view-switch" role="group" aria-label="View mode">
-          <button type="button" class="view-btn" data-view="grid" title="Thumbnail grid" aria-label="Thumbnail grid">▦</button>
-          <button type="button" class="view-btn" data-view="compact" title="Compact — thumbnails and titles" aria-label="Compact view">▤</button>
-          <button type="button" class="view-btn" data-view="list" title="Text list" aria-label="List view">☰</button>
+        <div class="progress-block">
+          <div class="progress-labels"><p id="series-progress"></p><span id="series-percent"></span></div>
+          <progress id="series-progress-bar" class="progress-bar" max="100" value="0" aria-label="Series completion"></progress>
         </div>
-        <button id="select-toggle" class="ghost" type="button" aria-pressed="false">Select</button>
-        <button id="export-btn" class="ghost" type="button">Export</button>
-        <button id="copy-series-link" class="ghost" type="button" title="Copy a direct link to this series">🔗 Link</button>
+        <div class="series-actions">
+          <div class="view-switch" role="group" aria-label="View mode">
+            <button type="button" class="view-btn" data-view="grid" title="Thumbnail grid" aria-label="Thumbnail grid">▦</button>
+            <button type="button" class="view-btn" data-view="compact" title="Compact — thumbnails and titles" aria-label="Compact view">▤</button>
+            <button type="button" class="view-btn" data-view="list" title="Text list" aria-label="List view">☰</button>
+          </div>
+          <button id="select-toggle" class="ghost" type="button" aria-pressed="false">Select</button>
+          <button id="export-btn" class="ghost" type="button">Export</button>
+          <button id="copy-series-link" class="ghost" type="button" title="Copy a direct link to this series">🔗 Link</button>
+        </div>
+        <div id="playlist-tools" class="playlist-tools" hidden>
+          <div class="playlist-info">
+            <span class="playlist-mark" aria-hidden="true">▶</span>
+            <div><a id="playlist-source" target="_blank" rel="noopener noreferrer">Linked YouTube playlist ↗</a><p id="playlist-sync-status" class="hint"></p></div>
+          </div>
+          <button id="refresh-playlist-btn" class="ghost" type="button">↻ Refresh playlist</button>
+          <button id="restore-playlist-btn" class="ghost" type="button" title="Re-add removed videos that are still in the playlist">Restore removed</button>
+          <label class="check playlist-auto"><input id="playlist-auto-sync" type="checkbox"> Auto-sync</label>
+          <p id="playlist-sync-error" class="form-error" role="status" hidden></p>
+        </div>
       </div>
 
-      <div id="undo-bar" class="undo-bar card" hidden>
-        <span id="undo-text" class="muted"></span>
-        <div class="selection-actions">
-          <button id="undo-btn" class="ghost" type="button">Undo</button>
-          <button id="undo-dismiss" class="ghost" type="button">Dismiss</button>
+      <div class="series-layout">
+        <div class="series-main">
+          <div id="undo-bar" class="undo-bar card" hidden>
+            <span id="undo-text" class="muted"></span>
+            <div class="selection-actions">
+              <button id="undo-btn" class="ghost" type="button">Undo</button>
+              <button id="undo-dismiss" class="ghost" type="button">Dismiss</button>
+            </div>
+          </div>
+
+          <div id="selection-bar" class="selection-bar card" hidden>
+            <span id="selection-count" class="muted"></span>
+            <div class="selection-actions">
+              <button id="bulk-rename-btn" class="primary" type="button">Bulk rename</button>
+              <button id="bulk-watch-btn" class="ghost" type="button">Mark watched</button>
+              <button id="bulk-delete-btn" class="ghost" type="button">Delete</button>
+              <button id="bulk-clear-btn" class="ghost" type="button">Clear</button>
+            </div>
+          </div>
+
+          <form id="add-videos-form" class="card add-videos-card">
+            <label class="field" for="video-links">Add videos to this series</label>
+            <textarea id="video-links" rows="3" placeholder="Paste links, one per line — YouTube, Telegram (t.me/…), or any web page"></textarea>
+            <div class="add-videos-actions"><span class="hint">You can add multiple links at once.</span><button class="primary" type="submit">Add videos</button></div>
+          </form>
+
+          <div class="queue-heading"><h3 class="section-label">Up next</h3><span id="queue-count" class="hint"></span></div>
+          <ol id="video-list" class="video-list"></ol>
+
+          <details id="watched-section" class="watched card" hidden>
+            <summary id="watched-summary">Watched (0)</summary>
+            <ol id="watched-list" class="video-list"></ol>
+          </details>
         </div>
+
+        <aside class="card analytics" aria-labelledby="analytics-title">
+          <div class="analytics-heading"><div><p class="eyebrow">THE BIG PICTURE</p><h3 id="analytics-title">Series insights</h3></div><span class="analytics-symbol" aria-hidden="true">◷</span></div>
+          <div class="analytics-completion"><span>Completion</span><strong id="analytics-percent">0%</strong></div>
+          <div class="analytics-counts">
+            <div><strong id="analytics-total">0</strong><span>Videos</span></div>
+            <div><strong id="analytics-watched">0</strong><span>Watched</span></div>
+            <div><strong id="analytics-remaining">0</strong><span>Left</span></div>
+          </div>
+          <p id="analytics-in-progress" class="analytics-in-progress hint"></p>
+          <div class="analytics-divider"></div>
+          <p class="analytics-subheading">WATCH TIME</p>
+          <dl class="analytics-stats">
+            <div><dt>Total length</dt><dd id="analytics-total-time">—</dd></div>
+            <div><dt>Estimated watched</dt><dd id="analytics-watched-time">—</dd></div>
+            <div><dt>Time remaining</dt><dd id="analytics-remaining-time">—</dd></div>
+            <div><dt>Average video</dt><dd id="analytics-average-time">—</dd></div>
+          </dl>
+          <p id="analytics-coverage" class="analytics-note hint"></p>
+          <button id="refresh-durations-btn" class="ghost analytics-refresh" type="button" hidden>Find missing durations</button>
+          <div id="analytics-longest-wrap" class="analytics-extra" hidden><span>Longest video</span><strong id="analytics-longest"></strong></div>
+          <div id="analytics-sources" class="analytics-sources hint"></div>
+        </aside>
       </div>
-
-      <div id="selection-bar" class="selection-bar card" hidden>
-        <span id="selection-count" class="muted"></span>
-        <div class="selection-actions">
-          <button id="bulk-rename-btn" class="primary" type="button">Bulk rename</button>
-          <button id="bulk-watch-btn" class="ghost" type="button">Mark watched</button>
-          <button id="bulk-delete-btn" class="ghost" type="button">Delete</button>
-          <button id="bulk-clear-btn" class="ghost" type="button">Clear</button>
-        </div>
-      </div>
-
-      <form id="add-videos-form" class="card">
-        <textarea id="video-links" rows="3" placeholder="Paste links, one per line — YouTube, Telegram (t.me/…), or any web page"></textarea>
-        <button class="primary" type="submit" style="margin-top:10px">Add videos</button>
-      </form>
-
-      <h3 class="section-label">Queue</h3>
-      <ol id="video-list" class="video-list"></ol>
-
-      <details id="watched-section" class="watched card" hidden>
-        <summary id="watched-summary">Watched (0)</summary>
-        <ol id="watched-list" class="video-list"></ol>
-      </details>
     </section>
 
     <!-- ---------- Player ---------- -->
@@ -157,6 +222,23 @@
         <button id="modal-save" class="primary">Save</button>
       </div>
     </div>
+  </div>
+
+  <!-- ---------- Video duration ---------- -->
+  <div id="duration-modal" class="modal-backdrop" hidden>
+    <form id="duration-form" class="modal" role="dialog" aria-modal="true" aria-labelledby="duration-title">
+      <h3 id="duration-title">Set video duration</h3>
+      <p id="duration-video-name" class="muted"></p>
+      <label class="field">Duration in seconds, M:SS or H:MM:SS
+        <input id="duration-input" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 1:23:45">
+      </label>
+      <p class="hint">Leave blank if the duration is unknown.</p>
+      <p id="duration-error" class="form-error" role="alert" hidden></p>
+      <div class="modal-actions">
+        <button id="duration-cancel" class="ghost" type="button">Cancel</button>
+        <button id="duration-save" class="primary" type="submit">Save duration</button>
+      </div>
+    </form>
   </div>
 
   <!-- ---------- Rename (PowerRename-style) ---------- -->
