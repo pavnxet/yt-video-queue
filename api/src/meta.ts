@@ -111,20 +111,81 @@ export async function fetchMeta(input: string): Promise<LinkMeta | null> {
 
 // --------------------------------------------------------------------- fetch
 
+// The URL being fetched comes from the user, so it is untrusted input. Without
+// these checks a pasted link could point the Worker at localhost, a private
+// range or a cloud metadata endpoint (SSRF), and a redirect could carry it
+// there after the first check passed.
+const BLOCKED_HOST = /^(localhost|[^.]*\.localhost|[^.]*\.local|[^.]*\.internal|[^.]*\.home\.arpa|metadata\.google\.internal|metadata\.goog)$/i;
+
+function ipv4IsPrivate(host: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  return (
+    a === 0 || a === 10 || a === 127 ||
+    (a === 169 && b === 254) ||          // link-local, incl. cloud metadata
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
+    a >= 224                              // multicast and reserved
+  );
+}
+
+/** True only for a plain http(s) URL on a public host, with no embedded credentials. */
+function isPublicHttpUrl(u: URL): boolean {
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  if (u.username || u.password) return false;
+  const host = u.hostname.toLowerCase();
+  if (!host) return false;
+  // IPv6 literals are refused outright: link-local and unique-local forms are
+  // easy to miss, and no video page lives on one.
+  if (host.startsWith('[') || host.includes(':')) return false;
+  if (BLOCKED_HOST.test(host)) return false;
+  return !ipv4IsPrivate(host);
+}
+
+const MAX_REDIRECTS = 3;
+
 async function fetchHtml(url: string): Promise<string | null> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 6000);
   try {
-    const res = await fetch(url, {
-      signal: ctl.signal,
-      redirect: 'follow',
-      headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en,*;q=0.5' },
-    });
-    if (!res.ok) return null;
-    const ct = res.headers.get('content-type') || '';
-    if (!/text\/html|application\/xhtml/i.test(ct)) return null;
-    const text = await res.text();
-    return text.slice(0, 300_000);
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      let target: URL;
+      try {
+        target = new URL(current);
+      } catch {
+        return null;
+      }
+      // Re-checked on every hop, so a redirect cannot walk us somewhere private.
+      if (!isPublicHttpUrl(target)) return null;
+
+      const res = await fetch(target.toString(), {
+        signal: ctl.signal,
+        redirect: 'manual',
+        headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en,*;q=0.5' },
+      });
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location');
+        if (!location) return null;
+        try {
+          current = new URL(location, target).toString();
+        } catch {
+          return null;
+        }
+        continue;
+      }
+
+      if (!res.ok) return null;
+      const ct = res.headers.get('content-type') || '';
+      if (!/text\/html|application\/xhtml/i.test(ct)) return null;
+      const text = await res.text();
+      return text.slice(0, 300_000);
+    }
+    return null; // too many redirects
   } catch {
     return null; // network error, timeout, blocked — caller falls back to a derived name
   } finally {
