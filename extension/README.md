@@ -1,139 +1,64 @@
-# YT Video Queue — Save (browser extension)
+# YT Video Queue — browser extension
 
-A small, **personal** Chrome extension that puts a “Save to queue” button on
-YouTube and files the video straight into your own [YT Video Queue](../README.md).
+A self-contained Chrome Manifest V3 extension for your own [YT Video Queue](../README.md). It uses the same Worker and database as the website; there is no build or packaging step.
 
-It is built for one person — you — and it keeps everything on your machine:
+## Install unpacked
 
-- Your API URL and session token live in `chrome.storage.local`, never on a server.
-- The only thing it talks to is **your own Worker**, which writes to **your own
-  Turso database**.
-- The token is picked up from your queue site (where you already signed in with a
-  passkey); the extension never asks for your passkey and never sees your password
-  (there isn’t one).
+1. Deploy the current website and Worker from this branch. Full playlist import and synchronization additionally require the optional **`YOUTUBE_API_KEY` Worker secret** and YouTube Data API v3; see the [main setup guide](../README.md). The key is never put in the extension.
+2. Open `chrome://extensions` (or `edge://extensions` in Edge), enable **Developer mode**, and choose **Load unpacked**.
+3. Select the repository's **`extension/` folder** — the folder containing `manifest.json`, not the repository root. Pin the extension if you want the toolbar button visible.
+4. Open `https://pavnxet.github.io/yt-video-queue/` and sign in. The extension picks up that site's session and its configured API URL. **Reload any YouTube tabs that were already open** before installing or updating the extension.
+5. Open a YouTube video or playlist and use the toolbar popup or the floating pill. `Alt+Q` saves the current video to your default series; if no default exists, the panel opens so you can pick one.
 
----
+To connect manually, open the extension's **Settings**, enter the Worker URL and your existing session token, choose **Save**, and then **Test connection**. A token can be found in the queue site's browser storage as `ytq_token` after signing in; keep it private. The API URL must use HTTPS, except for localhost development. For a custom Worker host, Settings requests access to that one origin when you save.
 
-## What it does
+The automatic handoff and **Open queue** links are intentionally scoped to the project URL above. For a fork at a different site, either use manual settings or update the queue-site match/host in `manifest.json`, the trusted origin/path check in `background.js`, the config path in `content-site.js`, and the `SITE_URL` constants in the popup, options and YouTube scripts. Keep the trusted match specific to your own site.
 
-**From YouTube, without leaving the page**
+## Features
 
-- A floating **glass “Save to queue”** pill — translucent and blurred, so it
-  never hides the video behind it. The panel, the toast and every control inside
-  them are glass too, so the whole UI lets the video show through.
-- **Drag it anywhere** and the position is remembered. **Hide it** with the ✕ and
-  it leaves a slim glass handle you can click to bring it back.
-- **The panel drags as well** — grab its header (the ⣿ grip) and drop it where
-  you like; that position is remembered too. **Reset position** in the popup puts
-  both back to their default corner.
-- When the video is already in your queue, the pill turns green and names the
-  series.
-- **`Alt+Q`** saves the video you are watching.
-- The panel shows the thumbnail, title and channel, an **“in your queue” status**
-  line, a **▶ Resume at mm:ss** button, **Mark watched / unwatched**, the
-  **series picker**, a **create-series** box, a **“Save all N videos in this
-  playlist”** button on playlist pages, and a **peek at the next videos** in the
-  series that you can click straight through to.
+- **Save without leaving YouTube:** choose or create a series in the floating panel or toolbar popup. Drag or hide the pill; use **Reset position** in the popup to restore the pill and panel.
+- **See progress:** the selected series shows watched and remaining counts, completion, known total/remaining time and duration coverage. Estimated watch time includes saved positions and excludes unknown durations, just like the website.
+- **Import a full playlist:** on a YouTube playlist or playlist video, choose **Import full playlist** in the panel or **Import playlist as a series** in the popup. This creates a new linked series and fetches the complete playlist through your Worker, not just the items YouTube has rendered. The popup also lets you set a title and opt out of auto-sync.
+- **Refresh and restore:** linked series expose **Refresh playlist**, **Restore removed**, and the auto-sync toggle. Refresh appends newly available videos and preserves your edits and watch state; it does not delete videos removed from the source playlist. Restore explicitly re-adds previously removed items that are still in the playlist, as unwatched. Automatic checks target roughly six-hour intervals, subject to the scheduler and backlog.
+- **Save visible videos:** the separate **Save N visible** panel action adds only rendered playlist items to the selected existing series, in batches of 20. Existing and repeated video IDs are skipped. If a later batch fails, the message reports what was already saved; unlike full playlist import, this action is not atomic or linked.
+- **Track playback:** already-queued videos offer **Resume**, **Save position**, and **Mark watched / unwatched**. Saving a video captures its available duration without overwriting a known or manually edited length; the **Remember where you stopped** preference controls recording position when adding. The explicit **Save position** action is available regardless of that preference.
+- **Find videos quickly:** the current Worker provides an authenticated, indexed lookup. The extension falls back to scanning your series on older Workers; playlist features require the updated Worker.
+- **Other shortcuts:** right-click a YouTube page or video link to save it. The panel also previews the next unwatched videos in the selected series.
 
-**From the toolbar**
+Full imports support public and unlisted playlists of up to **500 entries**, including unavailable and duplicate entries. Private or inaccessible playlists cannot be imported. The Worker reports unavailable videos and missing API-key or quota errors. Video durations can remain unknown if YouTube does not supply them.
 
-- Click the icon for the popup: the current video, a series dropdown, your series
-  with `done/total` counts, and one click to save.
-- Right-click any link → **“Save link to YT Video Queue”**.
-- Right-click a YouTube page → **“Save this video to YT Video Queue”**.
+## Privacy and permissions
 
-**Saving wisely**
+The session token is stored in `chrome.storage.local` and sent in an Authorization header to your configured Worker. The Worker stores only a hash of the session token. The queue-site content script reads the token and its own `config.js`; the YouTube page itself does not receive the token. A site-sourced token is cleared when logout is observed or the session expires; a manually configured token is not cleared merely because the site is signed out. The extension never asks for your passkey or password.
 
-- **Duplicate detection.** If the video is already in the chosen series it is
-  reported, not added twice.
-- **Remembers your series.** The last series you used becomes the default for
-  one-click saves and `Alt+Q`.
-- **Records duration and position.** When enabled, the row is updated with the
-  video’s length and where you had got to, so the queue can resume.
-- **Knows what you’ve already queued.** Opening a video you already saved turns
-  the pill green and offers **Resume** and **Mark watched**, instead of letting
-  you add it twice.
-- **Queue peek.** The panel lists the next few unwatched videos in the series, so
-  you can jump to the next one without opening the web app.
-- **Batch playlists.** A whole playlist is saved in batches of 20, the way the
-  web app does it.
-
----
-
-## Install (unpacked, personal use)
-
-1. Open `chrome://extensions/` and turn on **Developer mode**.
-2. Click **Load unpacked** and choose this `extension/` folder.
-3. Open your queue site (`https://pavnxet.github.io/yt-video-queue/`) and sign in
-   once. The extension quietly picks up your session token and API URL.
-   - If you would rather paste them by hand, open the extension’s **Settings**
-     (right-click the toolbar icon → Options) and fill in the API base URL and
-     token, then press **Test connection**.
-4. Open any YouTube video. Use the pill, the popup, or `Alt+Q`.
-
-> If your Worker runs on a custom domain rather than `*.workers.dev`, the first
-> **Save** in Settings asks for permission for that one origin. That is the
-> narrowest grant the extension needs.
-
----
-
-## Files
-
-```
-extension/
-├─ manifest.json          MV3 manifest
-├─ background.js          service worker — the only thing that calls your API
-├─ content-youtube.js     floating pill + panel on YouTube (shadow DOM)
-├─ content-site.js        reads your token + API URL from your queue site
-├─ popup.html / popup.js  toolbar popup (also toggles / resets the pill)
-├─ options.html / options.js   settings
-├─ ui.css                 shared Claude-theme styling
-└─ icons/                 16 / 32 / 48 / 128
-```
-
-### How the pieces talk
-
-```
-YouTube page ──content-youtube.js──▶ service worker ──▶ your Worker ──▶ Turso
-queue site  ──content-site.js──────▶ (token + API URL)
-popup / options ────────────────────▶ service worker
-```
-
-Only the **service worker** makes network calls, so the extension origin never
-has to be added to the Worker’s CORS allow-list, and the token is used in exactly
-one place.
-
----
-
-## Permissions, and why
-
-| Permission | Why it is needed |
+| Permission / host | Purpose |
 | --- | --- |
-| `storage` | Keep your API URL, token and preferences locally |
-| `contextMenus` | The two right-click “Save …” items |
-| `activeTab` | Read the current tab when you press `Alt+Q` |
-| `*://*.youtube.com/*` | The floating button and the video metadata |
-| `https://pavnxet.github.io/*` | Read your session token from your queue site |
-| `https://*.workers.dev/*` | Talk to the default Worker deployment |
-| `optional_host_permissions` | Only if you move the Worker to a custom domain |
+| `storage` | Save the session, selected series and preferences locally |
+| `contextMenus` | Right-click save actions |
+| `activeTab` | Read the current tab for the popup and `Alt+Q` |
+| `*://*.youtube.com/*` | Show the floating panel and read video metadata |
+| `https://pavnxet.github.io/*` | Read the session and config from the configured queue site |
+| `https://*.workers.dev/*` | Send authenticated requests to a default Worker deployment |
+| Optional host access | Request a specific custom API origin only when configured in Settings |
 
-No analytics, no third-party hosts, no remote code.
+The popup can load YouTube thumbnails, and the site content script fetches the queue site's config. There is no extension analytics or remotely loaded extension code.
 
----
+## Development and tests
 
-## Notes and limits
+`shared.js` contains dependency-free URL and progress helpers shared by the service worker, popup and YouTube content script. The service worker performs authenticated API requests; `content-site.js` handles the scoped site handoff, and `content-youtube.js` renders the shadow-DOM panel.
 
-- **The repo is public, your queue is not.** GitHub Pages on a free account needs
-  a public repo, so this code is public — but your *data* is protected by your
-  passkey, and this extension only ever holds a session token for it.
-- Sessions last 30 days. When one expires the extension says so and clears the
-  token; sign in on the queue site again to reconnect.
-- The extension records a resume position only when **Remember where you stopped**
-  is on.
-- Telegram and generic web links are not added from the extension yet — the web
-  app handles those; the extension focuses on YouTube, which is where the button
-  makes sense.
+```bash
+cd api
+npm ci
+npm run typecheck
+npm test
+```
 
----
+This runs the manifest/resource checks, mocked service-worker and site-handoff tests, analytics parity tests, and Worker tests. For an optional Chromium UI smoke test with mocked Chrome APIs and API data:
 
-Made for one person. Made with 💖 by [pavnxet](https://github.com/pavnxet).
+```bash
+npm --prefix api install --no-save --package-lock=false playwright-core
+CHROME_PATH=/path/to/chromium node tests/extension-ui.smoke.cjs
+```
+
+The smoke test exercises the popup and YouTube panel but does not replace loading the extension unpacked in Chrome and checking it against your deployed Worker.

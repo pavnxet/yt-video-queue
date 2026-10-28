@@ -1,46 +1,51 @@
 /**
- * YT Video Queue — Save
- * Runs on your queue site (pavnxet.github.io/yt-video-queue).
- *
- * It quietly hands the extension two things it needs: the session token the
- * site already keeps in localStorage, and the API base URL from config.js.
- * Nothing else is read, and nothing leaves your machine.
+ * Runs only on the configured queue site. It hands the signed-in session and
+ * API URL to the extension's service worker; the token is then sent only to
+ * that API in the Authorization header. No YouTube page can read it.
  */
-
 const TOKEN_KEY = 'ytq_token';
+const CONFIG_CACHE_MS = 60000;
+let cachedApiBase = '';
+let configCheckedAt = 0;
+let lastSent = '';
+let syncing = false;
 
 function readToken() {
   try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
 }
 
 async function readApiBase() {
+  if (cachedApiBase && Date.now() - configCheckedAt < CONFIG_CACHE_MS) return cachedApiBase;
+  configCheckedAt = Date.now();
   try {
-    const res = await fetch('./config.js', { cache: 'no-store' });
+    const res = await fetch(new URL('/yt-video-queue/config.js', location.origin).href, { cache: 'no-store' });
     if (!res.ok) return '';
     const text = await res.text();
     const m = text.match(/API_BASE_URL\s*=\s*["']([^"']+)["']/);
-    if (m && m[1] && !m[1].includes('REPLACE_WITH')) return m[1].replace(/\/+$/, '');
-  } catch { /* ignore */ }
-  return '';
+    cachedApiBase = m && m[1] && !m[1].includes('REPLACE_WITH') ? m[1].replace(/\/+$/, '') : '';
+    return cachedApiBase;
+  } catch { return ''; }
 }
 
-let lastSent = '';
-
 async function sync(force) {
-  const token = readToken();
-  const apiBaseUrl = await readApiBase();
-  const fingerprint = token + '|' + apiBaseUrl;
-  if (!force && fingerprint === lastSent) return;
-  if (!token && !apiBaseUrl) return;
-  lastSent = fingerprint;
+  if (syncing) return;
+  syncing = true;
   try {
-    await chrome.runtime.sendMessage({ type: 'site', token, apiBaseUrl });
-  } catch { /* the worker may be asleep; it will retry on the next tick */ }
+    const token = readToken();
+    const apiBaseUrl = await readApiBase();
+    if (!apiBaseUrl) return; // never send a session without its matching API URL
+    const fingerprint = token + '|' + apiBaseUrl;
+    if (!force && fingerprint === lastSent) return;
+    const result = await chrome.runtime.sendMessage({ type: 'site', token, apiBaseUrl });
+    // A failed message must be retried rather than remembered as delivered.
+    if (result && result.ok) lastSent = fingerprint;
+  } catch { /* retry on the next tick */ }
+  finally { syncing = false; }
 }
 
 sync(true);
-
-// The token changes when you sign in or out, and the page does not reload.
+// Same-tab localStorage changes do not emit a storage event, so poll the token;
+// config.js itself is cached above and is not fetched every four seconds.
 setInterval(() => sync(false), 4000);
 window.addEventListener('focus', () => sync(false));
 window.addEventListener('storage', (e) => { if (!e.key || e.key === TOKEN_KEY) sync(true); });

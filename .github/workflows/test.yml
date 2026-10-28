@@ -21,7 +21,7 @@ jobs:
       - name: Typecheck Worker
         working-directory: api
         run: npm run typecheck
-      - name: Test playlist sync, analytics and routing
+      - name: Test playlist sync, analytics, extension and routing
         working-directory: api
         run: npm test
       - name: Check Worker bundle

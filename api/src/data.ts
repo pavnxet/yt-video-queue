@@ -3,6 +3,7 @@ import { json, fail, uuid, nowIso } from './util';
 import { fetchMeta, type LinkMeta } from './meta';
 import { importPlaylist as importYouTubePlaylist, syncPlaylist } from './playlists';
 import { fillMissingDurations } from './durations';
+import { lookupVideoRows } from './video-lookup';
 import { fetchYouTubeVideos, MAX_DURATION_SECONDS, YouTubeError } from './youtube';
 import type { Env, SessionUser } from './types';
 
@@ -137,6 +138,15 @@ export async function getSeries(env: Env, user: SessionUser, seriesId: string): 
     },
     videos: vres.rows.map(videoJson),
   });
+}
+
+/** Find a YouTube video across this user's series without downloading every queue. */
+export async function lookupYouTubeVideo(env: Env, user: SessionUser, youtubeId: string): Promise<Response> {
+  if (!/^[A-Za-z0-9_-]{11}$/.test(youtubeId)) return fail('A valid YouTube video ID is required.');
+  const rows = await lookupVideoRows(db(env), user.id, youtubeId);
+  return json({ matches: rows.map((v) => ({
+    seriesId: String(v.series_id), seriesTitle: String(v.series_title), video: videoJson(v),
+  })) });
 }
 
 export async function patchSeries(request: Request, env: Env, user: SessionUser, seriesId: string): Promise<Response> {
@@ -355,8 +365,8 @@ export async function patchVideo(request: Request, env: Env, user: SessionUser, 
   // A late progress save must not turn a just-completed (or replayed) video
   // back into "watching" after the completion request has already arrived.
   const guard = body.status === 'watching' ? " AND status != 'done'" : '';
-  await db(env).execute({ sql: `UPDATE videos SET ${fields.join(', ')} WHERE id = ?${guard}`, args });
-  return json({ ok: true });
+  const result = await db(env).execute({ sql: `UPDATE videos SET ${fields.join(', ')} WHERE id = ?${guard}`, args });
+  return json({ ok: true, updated: result.rowsAffected > 0 });
 }
 
 export async function deleteVideo(env: Env, user: SessionUser, videoId: string): Promise<Response> {

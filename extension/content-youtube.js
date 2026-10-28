@@ -23,6 +23,7 @@
   const STYLES = `
     :host { all: initial; }
     * { box-sizing: border-box; font-family: "Styrene B", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    [hidden] { display: none !important; }
 
     /* ---- the glass pill ---- */
     .pill {
@@ -70,7 +71,7 @@
 
     /* ---- the glass panel ---- */
     .panel {
-      position: fixed; z-index: 2147483001; width: 330px;
+      position: fixed; z-index: 2147483001; width: 330px; max-width: calc(100vw - 16px);
       /* default corner: never let an unpositioned frame show top-left */
       right: 22px; bottom: 76px;
       background: rgba(250, 249, 245, 0.62);
@@ -134,6 +135,15 @@
     .btn.sm { padding: 7px 10px; font-size: 11.5px; width: auto; }
     .btnrow { display: flex; gap: 6px; }
     .btnrow .btn { width: auto; flex: 1; }
+    .insights { display: flex; flex-direction: column; gap: 7px; padding: 9px 10px; border: 1px solid rgba(255,255,255,.65); border-radius: 10px; background: rgba(255,255,255,.35); }
+    .statline { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: #575653; }
+    .statline strong { color: #8A3F24; }
+    .meter { height: 6px; border-radius: 9px; overflow: hidden; background: rgba(31,30,29,.16); }
+    .meter > span { display: block; height: 100%; background: #D97757; border-radius: inherit; }
+    .hint { color: #575653; font-size: 11px; line-height: 1.4; }
+    .checkline { display: flex; align-items: center; gap: 6px; margin: 0; }
+    .checkline input { accent-color: #C15F3C; }
+    .linked { display: flex; flex-direction: column; gap: 7px; border-top: 1px solid rgba(255,255,255,.5); padding-top: 7px; }
 
     .status {
       border-radius: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.45;
@@ -229,9 +239,13 @@
       </div>
     </div>
     <div class="body">
-      <div class="row">
+      <div class="row video-meta">
         <img class="thumb" alt="">
         <div class="meta"><div class="title"></div><div class="sub"></div></div>
+      </div>
+      <div class="playlist-tools" hidden>
+        <div class="hint">Import the full playlist as a new linked, auto-syncing series. Requires a YouTube API key on your Worker; 500 entries maximum.</div>
+        <div class="btnrow"><button class="btn sm import-playlist">Import full playlist</button><button class="btn sm playlist" hidden></button></div>
       </div>
 
       <div class="status" hidden></div>
@@ -240,18 +254,29 @@
         <label>Series</label>
         <select class="series"></select>
       </div>
+      <button class="btn sm new-toggle">+ Create a series</button>
       <div class="newrow">
-        <input type="text" class="newname" placeholder="New series name">
+        <input type="text" class="newname" placeholder="New series name" aria-label="New series name">
         <button class="btn primary create">Create</button>
+      </div>
+      <div class="insights" hidden>
+        <div class="statline"><span class="progress-label"></span><strong class="progress-percent"></strong></div>
+        <div class="meter" role="progressbar" aria-label="Series completion" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+        <div class="statline"><span class="time-remaining"></span><span class="time-total"></span></div>
+        <div class="hint duration-coverage"></div>
+        <div class="linked" hidden>
+          <div class="hint sync-status"></div>
+          <label class="checkline"><input class="auto-sync" type="checkbox"> Auto-sync playlist</label>
+          <div class="btnrow"><button class="btn sm refresh-playlist">Refresh playlist</button><button class="btn sm restore-playlist">Restore removed</button></div>
+        </div>
       </div>
       <button class="btn primary save">Save to queue</button>
 
       <div class="btnrow queued" hidden>
         <button class="btn sm resume" hidden>▶ Resume</button>
+        <button class="btn sm save-position">Save position</button>
         <button class="btn sm watched">Mark watched</button>
       </div>
-
-      <button class="btn playlist" hidden></button>
 
       <div class="peek" hidden>
         <h4 class="peekTitle">Next in this series</h4>
@@ -276,10 +301,15 @@
 
   const $ = (s) => panel.querySelector(s);
   const els = {
-    thumb: $('.thumb'), title: $('.title'), sub: $('.sub'),
-    status: $('.status'), series: $('.series'), newrow: $('.newrow'), newname: $('.newname'),
+    body: $('.body'), videoMeta: $('.video-meta'), thumb: $('.thumb'), title: $('.title'), sub: $('.sub'),
+    status: $('.status'), series: $('.series'), newrow: $('.newrow'), newname: $('.newname'), newToggle: $('.new-toggle'),
     create: $('.create'), save: $('.save'), queued: $('.queued'), resume: $('.resume'),
-    watched: $('.watched'), playlist: $('.playlist'), peek: $('.peek'),
+    savePosition: $('.save-position'), watched: $('.watched'), playlistTools: $('.playlist-tools'),
+    importPlaylist: $('.import-playlist'), playlist: $('.playlist'), peek: $('.peek'),
+    insights: $('.insights'), progressLabel: $('.progress-label'), progressPercent: $('.progress-percent'),
+    meter: $('.meter'), meterFill: $('.meter span'), timeRemaining: $('.time-remaining'), timeTotal: $('.time-total'),
+    durationCoverage: $('.duration-coverage'), linked: $('.linked'), syncStatus: $('.sync-status'),
+    autoSync: $('.auto-sync'), refreshPlaylist: $('.refresh-playlist'), restorePlaylist: $('.restore-playlist'),
     peekTitle: $('.peekTitle'), peekList: $('.peekList'),
     msg: $('.msg'), who: $('.who'), close: $('.x2'), head: $('.head')
   };
@@ -302,7 +332,6 @@
     clearTimeout(showToast._t);
     showToast._t = setTimeout(() => { toast.dataset.show = '0'; }, 2600);
   }
-  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   function fmtDur(sec) {
     sec = Math.round(sec || 0);
@@ -314,13 +343,7 @@
   // ------------------------------------------------------------ page info
 
   function videoId() {
-    try {
-      const u = new URL(location.href);
-      if (u.searchParams.get('v')) return u.searchParams.get('v');
-      const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([A-Za-z0-9_-]{11})/);
-      if (m) return m[1];
-    } catch { /* ignore */ }
-    return '';
+    return YTQShared.videoIdFrom(location.href);
   }
 
   function videoInfo() {
@@ -341,19 +364,16 @@
   }
 
   function playlistInfo() {
-    const panelEl = document.querySelector('ytd-playlist-panel-renderer#playlist');
-    if (!panelEl) return null;
-    const items = panelEl.querySelectorAll('ytd-playlist-panel-video-renderer');
-    if (!items || items.length < 2) return null;
-    const urls = [];
-    items.forEach((it) => {
-      const a = it.querySelector('a#wc-endpoint, a[href*="watch?v="]');
-      if (!a) return;
-      const m = (a.getAttribute('href') || '').match(/[?&]v=([A-Za-z0-9_-]{11})/);
-      if (m) urls.push('https://www.youtube.com/watch?v=' + m[1]);
+    const url = YTQShared.playlistUrl(location.href);
+    if (!url) return null;
+    const ids = new Set();
+    document.querySelectorAll('ytd-playlist-panel-video-renderer, ytd-playlist-video-renderer').forEach((item) => {
+      const link = item.querySelector('a#wc-endpoint, a#thumbnail, a[href*="watch?v="]');
+      const id = link && YTQShared.videoIdFrom(link.href);
+      if (id) ids.add(id);
     });
-    const unique = [...new Set(urls)];
-    return unique.length > 1 ? { count: unique.length, urls: unique } : null;
+    const urls = [...ids].map((id) => 'https://www.youtube.com/watch?v=' + id);
+    return { url, count: urls.length, urls };
   }
 
   // ------------------------------------------------------------ position & visibility
@@ -498,25 +518,37 @@
 
   // ------------------------------------------------------------ queued state
 
-  let queued = null; // { seriesId, seriesTitle, video }
+  let queued = null;
+  let queuedMatches = [];
+  let lookupError = '';
+  let selectedPlaylist = null;
+  let detailRequest = 0;
+  let lookupRequest = 0;
 
   function renderQueued() {
+    queued = queuedMatches.find((match) => match.seriesId === els.series.value) || queuedMatches[0] || null;
+    const info = videoInfo();
+    const inSelected = queuedMatches.some((match) => match.seriesId === els.series.value);
+    els.save.hidden = !info;
+    els.save.disabled = !info || !els.series.value || inSelected;
     if (queued) {
       pill.classList.add('saved');
       pill.querySelector('.label').textContent = 'In ' + (queued.seriesTitle || 'queue');
       els.status.hidden = false;
       const st = queued.video.status || 'todo';
       const resume = queued.video.resumeSeconds || 0;
-      els.status.innerHTML = `In <b>${esc(queued.seriesTitle)}</b> · ${st === 'done' ? 'watched' : st === 'watching' ? 'watching' : 'to watch'}`
-        + (resume ? ` · last at ${esc(fmtDur(resume))}` : '');
+      els.status.textContent = `In ${queued.seriesTitle || 'queue'} · ${st === 'done' ? 'watched' : st === 'watching' ? 'watching' : 'to watch'}`
+        + (resume ? ` · last at ${fmtDur(resume)}` : '') + (queuedMatches.length > 1 ? ` · in ${queuedMatches.length} series` : '');
       els.queued.hidden = false;
       els.resume.hidden = !resume;
+      els.savePosition.hidden = st === 'done';
       els.watched.textContent = st === 'done' ? 'Mark unwatched' : 'Mark watched';
-      els.save.textContent = 'Save to another series';
+      els.save.textContent = inSelected ? 'Already in this series' : 'Save to selected series';
     } else {
       pill.classList.remove('saved');
       pill.querySelector('.label').textContent = 'Save to queue';
-      els.status.hidden = true;
+      els.status.hidden = !lookupError;
+      els.status.textContent = lookupError ? 'Could not check whether this video is already queued.' : '';
       els.queued.hidden = true;
       els.resume.hidden = true;
       els.save.textContent = 'Save to queue';
@@ -525,9 +557,12 @@
 
   async function checkQueued() {
     const info = videoInfo();
-    if (!info || !(cfg.apiBaseUrl && cfg.hasToken)) { queued = null; renderQueued(); return; }
+    const request = ++lookupRequest;
+    if (!info || !(cfg.apiBaseUrl && cfg.hasToken)) { queuedMatches = []; lookupError = ''; renderQueued(); return; }
     const r = await send({ type: 'findVideo', youtubeId: info.videoId });
-    queued = (r && r.ok && r.found) ? r.matches[0] : null;
+    if (request !== lookupRequest || videoId() !== info.videoId) return;
+    lookupError = r && !r.ok ? r.error || 'Could not check queued videos.' : '';
+    queuedMatches = r && r.ok && Array.isArray(r.matches) ? r.matches : [];
     renderQueued();
   }
 
@@ -535,13 +570,18 @@
 
   function fillPanel() {
     const info = videoInfo();
-    if (!info) return false;
-    els.title.textContent = info.title || 'Untitled video';
-    els.sub.textContent = [info.channel, fmtDur(info.durationSeconds)].filter(Boolean).join(' · ');
-    els.thumb.src = info.thumbnail;
     const pl = playlistInfo();
-    els.playlist.hidden = !pl;
-    if (pl) els.playlist.textContent = `Save all ${pl.count} videos in this playlist`;
+    if (!info && !pl) return false;
+    els.videoMeta.hidden = !info;
+    els.save.hidden = !info;
+    if (info) {
+      els.title.textContent = info.title || 'Untitled video';
+      els.sub.textContent = [info.channel, fmtDur(info.durationSeconds)].filter(Boolean).join(' · ');
+      els.thumb.src = info.thumbnail;
+    }
+    els.playlistTools.hidden = !pl;
+    els.playlist.hidden = !pl || !pl.count;
+    if (pl && pl.count) els.playlist.textContent = `Save ${pl.count} visible`;
     return true;
   }
 
@@ -555,74 +595,114 @@
   }
 
   async function loadSeries(selectId) {
-    els.series.innerHTML = '<option>Loading…</option>';
+    els.series.replaceChildren(new Option('Loading…', ''));
     const r = await send({ type: 'series' });
     if (!r || !r.ok) {
-      els.series.innerHTML = ''; els.series.disabled = true; els.save.disabled = true;
-      setMsg(r && r.needSetup ? 'Open the extension settings and connect.' : ('Could not load series: ' + (r && r.error ? r.error : 'unknown')), 'err');
+      els.series.replaceChildren(new Option('Could not load series', ''));
+      els.series.disabled = true; els.save.disabled = true; els.insights.hidden = true;
+      setMsg(r && r.needSetup ? 'Open extension settings and connect.' : ('Could not load series: ' + (r && r.error ? r.error : 'unknown')), 'err');
       return null;
     }
-    els.series.disabled = false; els.save.disabled = false;
-    const list = r.series || [];
+    const list = Array.isArray(r.series) ? r.series : [];
+    els.series.replaceChildren();
     if (!list.length) {
-      els.series.innerHTML = '<option value="">No series yet — create one below</option>';
+      els.series.appendChild(new Option('No series yet — create one below', ''));
+      els.series.disabled = true; els.save.disabled = true; els.insights.hidden = true; els.peek.hidden = true;
       els.newrow.dataset.open = '1';
       return list;
     }
-    els.series.innerHTML = list.map((s) => `<option value="${s.id}">${esc(s.title)} · ${s.done}/${s.total}</option>`).join('');
-    const pick = selectId || (queued && queued.seriesId) || cfg.lastSeriesId;
-    if (pick && list.some((s) => s.id === pick)) els.series.value = pick;
+    for (const series of list) els.series.appendChild(new Option(`${series.title} · ${series.done}/${series.total}`, series.id));
+    els.series.disabled = false;
+    const pick = selectId || cfg.lastSeriesId || (queued && queued.seriesId);
+    if (pick && list.some((series) => series.id === pick)) els.series.value = pick;
+    renderQueued();
     return list;
   }
 
-  async function loadPeek() {
+  async function loadSeriesDetail() {
     const seriesId = els.series.value;
-    if (!seriesId) { els.peek.hidden = true; return; }
+    const request = ++detailRequest;
+    if (!seriesId) { els.peek.hidden = true; els.insights.hidden = true; return true; }
     const r = await send({ type: 'seriesVideos', seriesId });
-    if (!r || !r.ok) { els.peek.hidden = true; return; }
-    const next = (r.videos || []).filter((v) => v.status !== 'done').slice(0, 5);
-    const title = r.series && r.series.title ? r.series.title : 'this series';
-    if (!next.length) { els.peek.hidden = true; return; }
-    els.peek.hidden = false;
-    els.peekTitle.textContent = `Next in ${title}`;
-    els.peekList.innerHTML = next.map((v) => `
-      <li data-url="${esc(v.url || (v.youtubeId ? 'https://www.youtube.com/watch?v=' + v.youtubeId : ''))}">
-        <span class="t">${esc(v.title || 'Untitled')}</span>
-        ${v.durationSeconds ? `<span class="d">${esc(fmtDur(v.durationSeconds))}</span>` : ''}
-      </li>`).join('');
-    els.peekList.querySelectorAll('li').forEach((li) => {
-      li.addEventListener('click', () => {
-        const url = li.getAttribute('data-url');
-        if (url) location.href = url;
-      });
-    });
+    if (request !== detailRequest || els.series.value !== seriesId) return false;
+    if (!r || !r.ok) {
+      els.peek.hidden = true; els.insights.hidden = true; selectedPlaylist = null;
+      setMsg(r?.error || 'Could not load series progress.', 'err');
+      return false;
+    }
+    const stats = YTQShared.seriesStats(r.videos);
+    els.insights.hidden = false;
+    els.progressLabel.textContent = `${stats.watched}/${stats.total} watched · ${stats.remaining} left`;
+    els.progressPercent.textContent = `${stats.percent}%`;
+    els.meterFill.style.width = `${stats.percent}%`;
+    els.meter.setAttribute('aria-valuenow', String(stats.percent));
+    els.meter.setAttribute('aria-valuetext', `${stats.watched} of ${stats.total} watched; ${stats.remaining} remaining`);
+    els.timeRemaining.textContent = stats.known ? `Remaining: ${YTQShared.formatDuration(stats.remainingSeconds)}` : 'Remaining: —';
+    els.timeTotal.textContent = stats.known ? `Total: ${YTQShared.formatDuration(stats.totalSeconds)}` : 'Total: —';
+    els.durationCoverage.textContent = stats.total ? `${stats.known} of ${stats.total} durations known${stats.unknown ? '; unknown lengths excluded' : ''}.` : 'Add videos to see watch time.';
+    selectedPlaylist = r.series.playlist || null;
+    els.linked.hidden = !selectedPlaylist;
+    if (selectedPlaylist) {
+      els.autoSync.checked = !!selectedPlaylist.autoSync;
+      const date = selectedPlaylist.lastSyncedAt ? new Date(selectedPlaylist.lastSyncedAt) : null;
+      const synced = date && !Number.isNaN(date.getTime()) ? `Last synced ${date.toLocaleString()}` : 'Not synced yet';
+      els.syncStatus.textContent = selectedPlaylist.lastError ? `Last refresh failed: ${selectedPlaylist.lastError}` : `${synced} · ${selectedPlaylist.autoSync ? 'checks roughly every 6 hours' : 'auto-sync off'}`;
+    }
+    const next = r.videos.filter((v) => v.status !== 'done').slice(0, 5);
+    els.peek.hidden = !next.length;
+    els.peekTitle.textContent = `Next in ${r.series.title || 'this series'}`;
+    els.peekList.replaceChildren();
+    for (const video of next) {
+      const li = document.createElement('li');
+      const title = document.createElement('span'); title.className = 't'; title.textContent = video.title || 'Untitled';
+      li.appendChild(title);
+      if (video.durationSeconds) {
+        const duration = document.createElement('span'); duration.className = 'd'; duration.textContent = fmtDur(video.durationSeconds); li.appendChild(duration);
+      }
+      const id = video.youtubeId || YTQShared.videoIdFrom(video.url);
+      if (/^[A-Za-z0-9_-]{11}$/.test(id || '')) {
+        li.tabIndex = 0; li.setAttribute('role', 'link');
+        const open = () => { location.href = 'https://www.youtube.com/watch?v=' + id; };
+        li.addEventListener('click', open);
+        li.addEventListener('keydown', (event) => { if (event.key === 'Enter') open(); });
+      }
+      els.peekList.appendChild(li);
+    }
+    return true;
   }
 
   async function openPanel() {
-    if (!fillPanel()) { showToast('Open a YouTube video first.'); return; }
-    // Show AND place it in the same synchronous block: the panel must never be
-    // painted at its default corner while the fetches below are in flight.
+    if (!fillPanel()) { showToast('Open a YouTube video or playlist first.'); return; }
     panel.dataset.open = '1';
     positionPanel();
     await refreshState();
     if (!(cfg.apiBaseUrl && cfg.hasToken)) {
-      setMsg('Not connected yet. Open the extension settings and paste your API URL, or visit your queue site once.', 'warn');
-      els.save.disabled = true; els.series.disabled = true;
+      queuedMatches = []; lookupError = ''; selectedPlaylist = null;
+      els.insights.hidden = true; els.peek.hidden = true; renderQueued();
+      els.series.replaceChildren(new Option('Connect to see your series', ''));
+      setMsg('Not connected yet. Open extension settings or sign in on your queue site.', 'warn');
+      els.save.disabled = true; els.series.disabled = true; els.importPlaylist.disabled = true;
       positionPanel();
       return;
     }
-    els.save.disabled = false;
+    els.importPlaylist.disabled = false;
     await checkQueued();
-    await loadSeries();
-    await loadPeek();
-    setMsg(queued ? 'Already in your queue.' : 'Ready.', queued ? 'ok' : 'muted');
+    const list = await loadSeries();
+    const detailOk = list ? await loadSeriesDetail() : false;
+    if (list && detailOk) setMsg(lookupError || (queued ? 'Already in your queue.' : 'Ready.'), lookupError ? 'warn' : queued ? 'ok' : 'muted');
     positionPanel();
     requestAnimationFrame(positionPanel);
   }
 
   // ------------------------------------------------------------ actions
 
-  els.series.addEventListener('change', loadPeek);
+  els.series.addEventListener('change', async () => {
+    cfg.lastSeriesId = els.series.value;
+    await send({ type: 'setConfig', patch: { lastSeriesId: els.series.value } });
+    renderQueued();
+    await loadSeriesDetail();
+  });
+  els.newToggle.addEventListener('click', () => { els.newrow.dataset.open = els.newrow.dataset.open === '1' ? '0' : '1'; });
 
   els.create.addEventListener('click', async () => {
     const name = (els.newname.value || '').trim();
@@ -632,10 +712,10 @@
     els.create.disabled = false;
     if (!r || !r.ok) { setMsg('Could not create: ' + (r && r.error ? r.error : 'unknown'), 'err'); return; }
     els.newname.value = ''; els.newrow.dataset.open = '0';
-    setMsg('Series created.', 'ok');
+    cfg.lastSeriesId = r.id;
     await send({ type: 'setConfig', patch: { lastSeriesId: r.id } });
-    await loadSeries(r.id);
-    await loadPeek();
+    await loadSeries(r.id); await loadSeriesDetail();
+    setMsg('Series created.', 'ok');
   });
 
   els.save.addEventListener('click', async () => {
@@ -645,17 +725,17 @@
     if (!seriesId) { setMsg('Pick or create a series first.', 'warn'); return; }
     els.save.disabled = true; setMsg('Saving…', 'muted');
     const r = await send({ type: 'save', seriesId, url: info.url, durationSeconds: info.durationSeconds, resumeSeconds: info.currentTime });
-    els.save.disabled = false;
     if (r && r.ok) {
-      setMsg(`Saved to “${r.seriesTitle || 'your queue'}”.`, 'ok');
-      showToast('✓ Added to your queue');
-      await send({ type: 'setConfig', patch: { lastSeriesId: seriesId } });
-      await checkQueued(); await loadPeek();
+      cfg.lastSeriesId = seriesId;
+      await checkQueued(); await loadSeries(seriesId); await loadSeriesDetail();
+      setMsg(r.warning || `Saved to “${r.seriesTitle || 'your queue'}”.`, r.warning ? 'warn' : 'ok');
+      showToast(r.warning ? 'Saved, but progress needs attention' : '✓ Added to your queue');
     } else if (r && r.duplicate) {
+      await checkQueued();
       setMsg(`Already in “${r.seriesTitle || 'this series'}”.`, 'warn');
       showToast('Already in that series');
-      await checkQueued();
     } else {
+      renderQueued();
       setMsg('Could not save: ' + (r && r.error ? r.error : 'unknown'), 'err');
       showToast('Save failed');
     }
@@ -671,30 +751,85 @@
     }
   });
 
+  els.savePosition.addEventListener('click', async () => {
+    const info = videoInfo();
+    if (!queued || queued.video.status === 'done' || !info) return;
+    if (!(info.currentTime > 0)) { setMsg('Play the video first to save a position.', 'warn'); return; }
+    els.savePosition.disabled = true;
+    const r = await send({ type: 'patchVideo', videoId: queued.video.id, status: 'watching', resumeSeconds: info.currentTime, durationSeconds: queued.video.durationSeconds ? undefined : info.durationSeconds });
+    els.savePosition.disabled = false;
+    if (!r || !r.ok) { setMsg('Could not save position: ' + (r?.error || 'unknown'), 'err'); return; }
+    await checkQueued(); await loadSeriesDetail();
+    setMsg(`Position saved at ${fmtDur(info.currentTime)}.`, 'ok');
+  });
+
   els.watched.addEventListener('click', async () => {
     if (!queued) return;
     const toDone = queued.video.status !== 'done';
     els.watched.disabled = true;
-    const r = await send({ type: 'patchVideo', videoId: queued.video.id, status: toDone ? 'done' : 'todo' });
+    const r = await send({ type: 'patchVideo', videoId: queued.video.id, status: toDone ? 'done' : 'todo', resumeSeconds: 0, durationSeconds: queued.video.durationSeconds ? undefined : videoInfo()?.durationSeconds });
     els.watched.disabled = false;
     if (r && r.ok) {
       showToast(toDone ? 'Marked watched' : 'Marked unwatched');
-      await checkQueued(); await loadPeek();
-    } else {
-      setMsg('Could not update: ' + (r && r.error ? r.error : 'unknown'), 'err');
-    }
+      await checkQueued(); await loadSeries(els.series.value); await loadSeriesDetail();
+    } else setMsg('Could not update: ' + (r && r.error ? r.error : 'unknown'), 'err');
+  });
+
+  els.importPlaylist.addEventListener('click', async () => {
+    const pl = playlistInfo();
+    if (!pl) return;
+    els.importPlaylist.disabled = true; setMsg('Importing the full playlist…', 'muted');
+    const r = await send({ type: 'importPlaylist', url: pl.url, autoSync: true });
+    els.importPlaylist.disabled = false;
+    if (!r || !r.ok) { setMsg('Could not import playlist: ' + (r?.error || 'unknown'), 'err'); return; }
+    cfg.lastSeriesId = r.id;
+    await loadSeries(r.id); await loadSeriesDetail(); await checkQueued();
+    setMsg(`Imported ${r.added || 0} videos${r.unavailable ? ` · ${r.unavailable} unavailable` : ''}${r.duplicates ? ` · ${r.duplicates} duplicates skipped` : ''}.`, 'ok');
+    showToast('✓ Linked playlist imported');
   });
 
   els.playlist.addEventListener('click', async () => {
     const pl = playlistInfo();
-    if (!pl) return;
+    if (!pl || !pl.count) return;
     const seriesId = els.series.value;
     if (!seriesId) { setMsg('Pick or create a series first.', 'warn'); return; }
-    els.playlist.disabled = true; setMsg(`Saving ${pl.count} videos…`, 'muted');
+    els.playlist.disabled = true; setMsg(`Saving ${pl.count} visible videos…`, 'muted');
     const r = await send({ type: 'saveMany', seriesId, urls: pl.urls });
     els.playlist.disabled = false;
-    if (r && r.ok) { setMsg(`Added ${r.added}${r.skipped ? `, skipped ${r.skipped}` : ''}.`, 'ok'); showToast(`✓ Added ${r.added} videos`); await loadPeek(); }
-    else setMsg('Could not save playlist: ' + (r && r.error ? r.error : 'unknown'), 'err');
+    if (r && r.ok) {
+      await loadSeries(seriesId); await loadSeriesDetail(); await checkQueued();
+      setMsg(`Added ${r.added}${r.duplicates ? ` · ${r.duplicates} duplicates skipped` : ''}${r.skipped ? ` · ${r.skipped} unavailable` : ''}.`, 'ok');
+      showToast(`✓ Added ${r.added} visible videos`);
+    } else {
+      if (r?.added) { await loadSeries(seriesId); await loadSeriesDetail(); }
+      setMsg('Could not save visible videos: ' + (r?.error || 'unknown'), 'err');
+    }
+  });
+
+  async function refreshLinked(restoreRemoved) {
+    if (!selectedPlaylist || !els.series.value) return;
+    if (restoreRemoved && !confirm('Re-add removed videos still in this playlist as unwatched?')) return;
+    const id = els.series.value;
+    els.refreshPlaylist.disabled = true; els.restorePlaylist.disabled = true;
+    setMsg(restoreRemoved ? 'Restoring…' : 'Refreshing playlist…', 'muted');
+    const r = await send({ type: 'refreshPlaylist', seriesId: id, restoreRemoved });
+    els.refreshPlaylist.disabled = false; els.restorePlaylist.disabled = false;
+    if (els.series.value === id) { await loadSeries(id); await loadSeriesDetail(); }
+    if (!r || !r.ok) { setMsg('Could not refresh: ' + (r?.error || 'unknown'), 'err'); return; }
+    await checkQueued();
+    setMsg(`${r.added || 0} videos added${r.unavailable ? ` · ${r.unavailable} unavailable` : ''}.`, 'ok');
+  }
+  els.refreshPlaylist.addEventListener('click', () => refreshLinked(false));
+  els.restorePlaylist.addEventListener('click', () => refreshLinked(true));
+  els.autoSync.addEventListener('change', async () => {
+    const id = els.series.value, enabled = els.autoSync.checked;
+    if (!selectedPlaylist || !id) return;
+    els.autoSync.disabled = true;
+    const r = await send({ type: 'setAutoSync', seriesId: id, enabled });
+    els.autoSync.disabled = false;
+    if (!r || !r.ok) { if (els.series.value === id) els.autoSync.checked = !enabled; setMsg(r?.error || 'Could not update auto-sync.', 'err'); return; }
+    if (els.series.value === id) await loadSeriesDetail();
+    setMsg(enabled ? 'Automatic checks enabled.' : 'Automatic checks paused.', 'ok');
   });
 
   // ------------------------------------------------------------ lifecycle
@@ -717,6 +852,10 @@
     lastHref = location.href;
     panel.dataset.open = '0';
     queued = null;
+    queuedMatches = [];
+    lookupError = '';
+    lookupRequest++;
+    detailRequest++;
     renderQueued();
     setTimeout(() => { checkQueued(); if (panel.dataset.open === '1') openPanel(); }, 500);
   }
@@ -729,8 +868,14 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes.settings) { cfg.settings = { ...cfg.settings, ...(changes.settings.newValue || {}) }; applyVisibility(); }
-    if (changes[POS_KEY] && !pos) { pos = changes[POS_KEY].newValue; applyVisibility(); }
-    if (changes[PANEL_POS_KEY] && !panelPos) { panelPos = changes[PANEL_POS_KEY].newValue; if (panel.dataset.open === '1') positionPanel(); }
+    if (changes.token || changes.apiBaseUrl) {
+      if (changes.token) cfg.hasToken = !!changes.token.newValue;
+      if (changes.apiBaseUrl) cfg.apiBaseUrl = changes.apiBaseUrl.newValue || '';
+      els.who.textContent = (cfg.apiBaseUrl && cfg.hasToken) ? 'Connected' : 'Not connected';
+      if (panel.dataset.open === '1') openPanel();
+    }
+    if (changes[POS_KEY]) { pos = changes[POS_KEY].newValue || null; applyVisibility(); }
+    if (changes[PANEL_POS_KEY]) { panelPos = changes[PANEL_POS_KEY].newValue || null; if (panel.dataset.open === '1') positionPanel(); }
     if (changes[HIDDEN_KEY]) { hidden = !!changes[HIDDEN_KEY].newValue; applyVisibility(); }
   });
 

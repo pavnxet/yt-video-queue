@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS videos (
 -- Databases created before v1.1 (youtube_id NOT NULL, no source/url) are rebuilt
 -- automatically by the Worker on its first request after the upgrade.
 CREATE INDEX IF NOT EXISTS idx_videos_series ON videos(series_id, position);
+CREATE INDEX IF NOT EXISTS idx_videos_youtube ON videos(youtube_id, series_id);
 
 -- Keeps deliberately removed playlist videos from being re-added on refresh.
 CREATE TABLE IF NOT EXISTS playlist_seen_videos (

@@ -84,7 +84,7 @@
     <div class="toggle">
       <div>
         <div class="t">Remember where you stopped</div>
-        <div class="d">Record the duration and your playback position when saving</div>
+        <div class="d">Save your playback position when adding a video. Its duration is saved when available.</div>
       </div>
       <label class="sw"><input type="checkbox" id="recordResume"><span class="sl"></span></label>
     </div>
@@ -93,7 +93,7 @@
   <section class="card">
     <h3>How saving works</h3>
     <p class="hint">
-      Every save goes through your own Worker to your own Turso database — nothing is sent anywhere else, and the token never leaves this machine.
+      Your session is stored locally and sent to your configured Worker with API requests. Your Worker writes to your own Turso database.
       Saving the same video twice is detected and skipped rather than duplicated.
     </p>
   </section>

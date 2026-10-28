@@ -1,6 +1,6 @@
 # YT Video Queue
 
-**v1.6.0** — a personal, passkey-protected watch queue for YouTube, Telegram and
+**v1.7.0** — a personal, passkey-protected watch queue for YouTube, Telegram and
 any other web video link.
 
 Add links into ordered **series**, watch them **one by one**, and have the next
@@ -107,11 +107,14 @@ only **your** passkey opens it.
 
 ## Browser extension
 
-A companion Chrome extension lives in [`extension/`](extension/): it puts a
-**Save to queue** button on YouTube — a floating pill, `Alt+Q`, a series picker,
-playlist batch-save and duplicate detection — and files the video straight into
-your queue through the same API. It is personal-use and unpacked; see
-[extension/README.md](extension/README.md) for install steps and permissions.
+The unpacked Chrome extension in [`extension/`](extension/) adds a floating
+YouTube save panel, a toolbar popup, `Alt+Q`, duplicate detection, and series
+progress/time insights. Import a full public or unlisted playlist as a linked
+series, refresh it or change auto-sync; alternatively, add only the videos
+currently visible on the page to an existing series. Full playlist features
+require this version of the Worker and the optional server-side YouTube API key.
+See [extension/README.md](extension/README.md) for loading it unpacked, connection
+setup, permissions and limits.
 
 ---
 
@@ -292,7 +295,7 @@ Serve the frontend with any static server, point `frontend/config.js` at
 cd api
 npm ci
 npm run typecheck
-npm test                             # playlist sync, migrations, analytics and routing
+npm test                             # playlist sync, migrations, analytics, extension and routing
 npx wrangler deploy --dry-run         # validate the Worker bundle without deploying
 ```
 
@@ -386,6 +389,10 @@ Never commit `api/.dev.vars` or any real credential — `.gitignore` excludes it
 
 ## Version history
 
+- **v1.7.0** — integrates the unpacked Chrome extension with linked-playlist
+  import, refresh and auto-sync, series progress/time insights, current-position
+  updates and duplicate-safe visible-video batching. Adds an indexed,
+  authenticated YouTube lookup, session-handoff safeguards and extension tests.
 - **v1.6.0** — progress bars and a detailed series insights sidebar; public or
   unlisted YouTube playlist import, manual and scheduled refresh, and optional
   API-backed duration lookup. Sync preserves edits and progress, skips duplicate

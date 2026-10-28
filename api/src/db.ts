@@ -90,6 +90,7 @@ export const DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_series_user ON series(user_id, position)`,
   VIDEOS_TABLE,
   `CREATE INDEX IF NOT EXISTS idx_videos_series ON videos(series_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_videos_youtube ON videos(youtube_id, series_id)`,
   // Remember imported IDs even if the user removes a video. A refresh should
   // add genuinely new uploads, not resurrect things deliberately removed.
   `CREATE TABLE IF NOT EXISTS playlist_seen_videos (
@@ -160,7 +161,7 @@ export function ensureSchema(env: Env): Promise<void> {
  * NOT NULL constraint, so databases created before v1.1 are rebuilt once here —
  * existing rows keep their ids, titles and watch state, and gain a url.
  */
-async function migrateVideos(client: Client): Promise<void> {
+export async function migrateVideos(client: Client): Promise<void> {
   const info = await client.execute('PRAGMA table_info(videos)');
   const cols = info.rows.map((r) => String(r.name));
   if (cols.length === 0 || cols.includes('source')) return; // fresh or already migrated
@@ -181,4 +182,5 @@ async function migrateVideos(client: Client): Promise<void> {
   await client.execute('DROP TABLE videos');
   await client.execute('ALTER TABLE videos_new RENAME TO videos');
   await client.execute('CREATE INDEX IF NOT EXISTS idx_videos_series ON videos(series_id, position)');
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_videos_youtube ON videos(youtube_id, series_id)');
 }

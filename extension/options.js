@@ -20,7 +20,14 @@ function send(msg) {
 }
 
 function originOf(url) {
-  try { return new URL(url).origin + '/*'; } catch { return ''; }
+  try {
+    const parsed = new URL(url);
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+    if ((parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && local)) ||
+        parsed.username || parsed.password || parsed.search || parsed.hash) return '';
+    // Extension match patterns omit ports and cover all ports on this host.
+    return parsed.protocol + '//' + parsed.hostname + '/*';
+  } catch { return ''; }
 }
 
 function setStatus(ok) {
@@ -73,18 +80,33 @@ el.saveConn.addEventListener('click', async () => {
   // the default worker domain.
   if (url) {
     const origin = originOf(url);
-    const already = await chrome.permissions.contains({ origins: [origin] });
-    if (!already) {
+    if (!origin) {
+      el.testResult.className = 'hint err';
+      el.testResult.textContent = 'Use an HTTPS API URL, or localhost for development.';
+      return;
+    }
+    // Request directly within the click gesture. Already-granted origins do
+    // not show a prompt, and no preceding async call can lose the gesture.
+    try {
       const granted = await chrome.permissions.request({ origins: [origin] });
       if (!granted) {
         el.testResult.className = 'hint err';
         el.testResult.textContent = 'Access to ' + origin + ' was declined, so requests will fail. Try again and allow it.';
         return;
       }
+    } catch {
+      el.testResult.className = 'hint err';
+      el.testResult.textContent = 'Could not request access to ' + origin + '. Check the URL and try again.';
+      return;
     }
   }
 
   const r = await send({ type: 'setConfig', patch: { apiBaseUrl: url, token } });
+  if (!r || !r.ok) {
+    el.testResult.className = 'hint err';
+    el.testResult.textContent = r?.error || 'Could not save connection settings.';
+    return;
+  }
   setStatus(!!(url && token));
   el.testResult.className = 'hint ok';
   el.testResult.textContent = 'Saved.';
@@ -132,7 +154,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.token || changes.apiBaseUrl) {
     setStatus(!!(el.apiUrl.value && el.token.value));
     el.testResult.className = 'hint ok';
-    el.testResult.textContent = 'Picked up from your queue site.';
+    el.testResult.textContent = 'Connection changed. Test it or sign in again if needed.';
   }
 });
 

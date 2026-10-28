@@ -1,224 +1,335 @@
-/* YT Video Queue — Save · popup */
-
+/* Toolbar popup: playlist import, selected-series insights and quick actions. */
 const SITE_URL = 'https://pavnxet.github.io/yt-video-queue/';
+const $ = (selector) => document.querySelector(selector);
+const el = Object.fromEntries([
+  'status', 'setup', 'saveCard', 'playlistCard', 'noVideo', 'thumb', 'vtitle', 'vsub',
+  'playlistTitle', 'importAutoSync', 'importPlaylist', 'playlistMsg', 'series', 'newToggle',
+  'newrow', 'newname', 'create', 'save', 'queuedActions', 'savePosition', 'markWatched',
+  'videoStatus', 'msg', 'seriesList', 'insights', 'progressLabel', 'progressPercent',
+  'progressBar', 'remainingTime', 'totalTime', 'watchedTime', 'inProgress', 'durationCoverage',
+  'linkedTools', 'syncStatus', 'autoSync', 'refreshPlaylist', 'restorePlaylist', 'openSeries',
+  'settings', 'openSettings', 'openSite', 'refresh', 'openQueue', 'lastSaved', 'togglePill', 'resetPill',
+].map((id) => [id, $('#' + id)]));
 
-const $ = (s) => document.querySelector(s);
-const el = {
-  status: $('#status'), setup: $('#setup'), saveCard: $('#saveCard'), noVideo: $('#noVideo'),
-  thumb: $('#thumb'), vtitle: $('#vtitle'), vsub: $('#vsub'),
-  series: $('#series'), newrow: $('#newrow'), newname: $('#newname'), create: $('#create'),
-  save: $('#save'), msg: $('#msg'), seriesList: $('#seriesList'),
-  settings: $('#settings'), openSettings: $('#openSettings'), openSite: $('#openSite'),
-  refresh: $('#refresh'), openQueue: $('#openQueue'), lastSaved: $('#lastSaved'),
-  togglePill: $('#togglePill'), resetPill: $('#resetPill')
-};
-
-let state = { apiBaseUrl: '', hasToken: false, lastSeriesId: '', lastSeriesTitle: '', settings: {} };
+let state = { apiBaseUrl: '', hasToken: false, lastSeriesId: '', settings: {} };
 let currentVideo = null;
+let currentPlaylist = '';
+let selectedSeries = null;
+let selectedVideo = null;
+let seriesList = [];
+let detailRequest = 0;
 
 function send(msg) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage(msg, (r) => {
-      if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
-      else resolve(r || { ok: false, error: 'No response' });
-    });
+    try {
+      chrome.runtime.sendMessage(msg, (r) => {
+        if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+        else resolve(r || { ok: false, error: 'No response' });
+      });
+    } catch (e) { resolve({ ok: false, error: e.message }); }
   });
 }
-
-function setMsg(text, kind) { el.msg.textContent = text || ''; el.msg.className = 'msg ' + (kind || ''); }
-
-function fmtDur(sec) {
-  sec = Math.round(sec || 0);
-  if (!sec) return '';
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+function message(target, text, kind = '') { target.textContent = text || ''; target.className = 'msg ' + kind; }
+function connected() { return !!(state.apiBaseUrl && state.hasToken); }
+function fmtClock(value) {
+  const seconds = Math.max(0, Math.round(Number(value) || 0));
+  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = seconds % 60;
   return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
 }
 
-function connected() { return !!(state.apiBaseUrl && state.hasToken); }
-
-// ------------------------------------------------------------------ tabs
-
-async function activeVideo() {
+async function activeContext() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id || !/youtube\.com/.test(tab.url || '')) return null;
+  if (!tab) return { video: null, playlist: '' };
+  const playlist = YTQShared.playlistUrl(tab.url || '');
+  if (!tab.id || !YTQShared.videoIdFrom(tab.url || '')) return { video: null, playlist };
   try {
     const info = await chrome.tabs.sendMessage(tab.id, { type: 'getVideoInfo' });
-    return info && info.videoId ? info : null;
-  } catch {
-    return null; // content script not ready yet (page loaded before install)
-  }
+    const id = info && YTQShared.videoIdFrom(info.url);
+    return { video: id && id === info.videoId ? info : null, playlist };
+  } catch { return { video: null, playlist }; }
 }
-
-// ------------------------------------------------------------------ render
 
 function renderStatus() {
-  if (connected()) {
-    el.status.textContent = 'Connected';
-    el.status.className = 'sub ok';
-    el.setup.hidden = true;
-  } else {
-    el.status.textContent = 'Not connected';
-    el.status.className = 'sub warn';
-    el.setup.hidden = false;
+  const ok = connected();
+  el.status.textContent = ok ? 'Connected' : 'Not connected';
+  el.status.className = 'sub ' + (ok ? 'ok' : 'warn');
+  el.setup.hidden = ok;
+  el.importPlaylist.disabled = !ok;
+}
+
+function renderContext() {
+  el.saveCard.hidden = !currentVideo;
+  el.playlistCard.hidden = !currentPlaylist;
+  el.noVideo.hidden = !!(currentVideo || currentPlaylist);
+  if (currentVideo) {
+    el.vtitle.textContent = currentVideo.title || 'Untitled video';
+    el.vsub.textContent = [currentVideo.channel, currentVideo.durationSeconds ? fmtClock(currentVideo.durationSeconds) : ''].filter(Boolean).join(' · ') || 'YouTube';
+    if (currentVideo.thumbnail) { el.thumb.src = currentVideo.thumbnail; el.thumb.hidden = false; }
+    else { el.thumb.removeAttribute('src'); el.thumb.hidden = true; }
   }
 }
 
-function renderVideo() {
-  if (!currentVideo) {
-    el.saveCard.hidden = true;
-    el.noVideo.hidden = false;
-    return;
-  }
-  el.noVideo.hidden = true;
-  el.saveCard.hidden = false;
-  el.vtitle.textContent = currentVideo.title || 'Untitled video';
-  el.vsub.textContent = [currentVideo.channel, fmtDur(currentVideo.durationSeconds)].filter(Boolean).join(' · ') || 'YouTube';
-  el.thumb.src = currentVideo.thumbnail || '';
-}
-
-async function renderSeries() {
-  if (!connected()) {
-    el.seriesList.innerHTML = '<li class="muted">Connect to see your series.</li>';
-    el.series.innerHTML = '';
-    el.series.disabled = true;
-    el.save.disabled = true;
-    return;
-  }
-  el.seriesList.innerHTML = '<li class="muted">Loading…</li>';
-  const r = await send({ type: 'series' });
-  if (!r || !r.ok) {
-    el.seriesList.innerHTML = `<li class="muted">${escapeHtml(r && r.error ? r.error : 'Could not load series.')}</li>`;
-    el.series.innerHTML = '';
-    el.series.disabled = true;
-    el.save.disabled = true;
-    return;
-  }
-  const list = r.series || [];
-
-  // dropdown
-  if (!list.length) {
-    el.series.innerHTML = '<option value="">No series yet — create one</option>';
-    el.series.disabled = true;
-    el.save.disabled = true;
-    el.newrow.hidden = false;
-  } else {
-    el.series.disabled = false;
-    el.save.disabled = false;
-    el.series.innerHTML = list.map((s) => `<option value="${s.id}">${escapeHtml(s.title)} · ${s.done}/${s.total}</option>`).join('');
-    if (state.lastSeriesId && list.some((s) => s.id === state.lastSeriesId)) el.series.value = state.lastSeriesId;
-    el.newrow.hidden = true;
-  }
-
-  // list
-  el.seriesList.innerHTML = list.length
-    ? list.map((s) => `<li data-id="${s.id}" class="${s.id === state.lastSeriesId ? 'active' : ''}">
-         <span class="nm">${escapeHtml(s.title)}</span>
-         <span class="st">${s.done}/${s.total}</span>
-       </li>`).join('')
-    : '<li class="muted">No series yet.</li>';
-
-  el.seriesList.querySelectorAll('li[data-id]').forEach((li) => {
-    li.addEventListener('click', async () => {
-      const id = li.getAttribute('data-id');
-      await send({ type: 'setConfig', patch: { lastSeriesId: id } });
-      state.lastSeriesId = id;
-      el.series.value = id;
-      el.seriesList.querySelectorAll('li').forEach((x) => x.classList.toggle('active', x === li));
-      el.lastSaved.textContent = 'Default series set';
+function renderSeriesList() {
+  el.seriesList.replaceChildren();
+  for (const series of seriesList) {
+    const item = document.createElement('li');
+    if (series.id === el.series.value) item.classList.add('active');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'series-choice';
+    const name = document.createElement('span');
+    name.className = 'nm';
+    name.textContent = series.title + (series.playlistId ? ' · playlist' : '');
+    const count = document.createElement('span');
+    count.className = 'st';
+    count.textContent = `${series.done}/${series.total}`;
+    button.append(name, count);
+    button.addEventListener('click', async () => {
+      el.series.value = series.id;
+      await chooseSeries();
     });
-  });
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-// ------------------------------------------------------------------ actions
-
-el.save.addEventListener('click', async () => {
-  if (!currentVideo) return;
-  const seriesId = el.series.value;
-  if (!seriesId) { setMsg('Create a series first.', 'warn'); return; }
-  el.save.disabled = true;
-  setMsg('Saving…');
-  const r = await send({
-    type: 'save', seriesId, url: currentVideo.url,
-    durationSeconds: currentVideo.durationSeconds, resumeSeconds: currentVideo.currentTime
-  });
-  el.save.disabled = false;
-  if (r && r.ok) {
-    setMsg(`Saved to “${r.seriesTitle || 'your queue'}”.`, 'ok');
-    el.lastSaved.textContent = 'Saved ✓';
-    await renderSeries();
-  } else if (r && r.duplicate) {
-    setMsg(`Already in “${r.seriesTitle || 'that series'}”.`, 'warn');
-  } else {
-    setMsg('Could not save: ' + (r && r.error ? r.error : 'unknown'), 'err');
+    item.appendChild(button);
+    el.seriesList.appendChild(item);
   }
-});
+  if (!seriesList.length) {
+    const item = document.createElement('li');
+    item.className = 'muted';
+    item.textContent = 'No series yet.';
+    el.seriesList.appendChild(item);
+  }
+}
 
+async function renderSeries(preferred) {
+  const prior = preferred || el.series.value || state.lastSeriesId;
+  if (!connected()) {
+    detailRequest++;
+    selectedSeries = null; selectedVideo = null;
+    seriesList = [];
+    el.series.replaceChildren(new Option('Connect to see your series', ''));
+    el.series.disabled = true;
+    el.save.hidden = !currentVideo;
+    el.save.disabled = true;
+    el.insights.hidden = true;
+    el.queuedActions.hidden = true;
+    el.videoStatus.hidden = true;
+    renderSeriesList();
+    return;
+  }
+  const r = await send({ type: 'series' });
+  if (!r.ok) {
+    detailRequest++;
+    selectedSeries = null; selectedVideo = null;
+    message(el.msg, r.error || 'Could not load series.', 'err');
+    el.series.disabled = true; el.save.disabled = true; el.insights.hidden = true;
+    el.queuedActions.hidden = true; el.videoStatus.hidden = true;
+    return;
+  }
+  seriesList = r.series || [];
+  el.series.replaceChildren();
+  if (!seriesList.length) {
+    detailRequest++;
+    selectedSeries = null; selectedVideo = null;
+    el.series.appendChild(new Option('No series yet — create one', ''));
+    el.series.disabled = true;
+    el.save.hidden = !currentVideo; el.save.disabled = true;
+    el.newrow.hidden = false;
+    el.insights.hidden = true; el.queuedActions.hidden = true; el.videoStatus.hidden = true;
+    renderSeriesList();
+    return;
+  }
+  for (const series of seriesList) el.series.appendChild(new Option(`${series.title} · ${series.done}/${series.total}`, series.id));
+  if (seriesList.some((series) => series.id === prior)) el.series.value = prior;
+  el.series.disabled = false;
+  renderSeriesList();
+  await loadSelectedSeries();
+}
+
+async function chooseSeries() {
+  const id = el.series.value;
+  state.lastSeriesId = id;
+  await send({ type: 'setConfig', patch: { lastSeriesId: id } });
+  el.lastSaved.textContent = 'Default series set';
+  renderSeriesList();
+  await loadSelectedSeries();
+}
+
+async function loadSelectedSeries() {
+  const id = el.series.value;
+  const request = ++detailRequest;
+  if (!id) { el.insights.hidden = true; return; }
+  const r = await send({ type: 'seriesVideos', seriesId: id });
+  if (request !== detailRequest || el.series.value !== id) return;
+  if (!r.ok) {
+    selectedSeries = null; selectedVideo = null;
+    el.insights.hidden = true; el.save.disabled = true; el.queuedActions.hidden = true;
+    message(el.msg, r.error || 'Could not load series.', 'err');
+    return;
+  }
+  selectedSeries = r.series;
+  const stats = YTQShared.seriesStats(r.videos);
+  el.insights.hidden = false;
+  el.progressLabel.textContent = `${stats.watched} / ${stats.total} watched · ${stats.remaining} left`;
+  el.progressPercent.textContent = `${stats.percent}%`;
+  el.progressBar.value = stats.percent;
+  el.progressBar.setAttribute('aria-valuetext', stats.total ? `${stats.watched} of ${stats.total} watched; ${stats.remaining} remaining` : 'No videos yet');
+  el.remainingTime.textContent = stats.known ? `Remaining: ${YTQShared.formatDuration(stats.remainingSeconds)}` : 'Remaining: —';
+  el.totalTime.textContent = stats.known ? `Total: ${YTQShared.formatDuration(stats.totalSeconds)}` : 'Total: —';
+  el.watchedTime.textContent = stats.known ? `Estimated watched: ${YTQShared.formatDuration(stats.watchedSeconds)}` : 'Estimated watched: —';
+  el.inProgress.textContent = stats.inProgress ? `${stats.inProgress} in progress` : '';
+  el.durationCoverage.textContent = stats.total ? `${stats.known} of ${stats.total} durations known${stats.unknown ? '; unknown lengths excluded' : ''}.` : 'Add videos to see watch time.';
+  const playlist = r.series.playlist;
+  el.linkedTools.hidden = !playlist;
+  if (playlist) {
+    el.autoSync.checked = !!playlist.autoSync;
+    const date = playlist.lastSyncedAt ? new Date(playlist.lastSyncedAt) : null;
+    const synced = date && !Number.isNaN(date.getTime()) ? `Last synced ${date.toLocaleString()}` : 'Not synced yet';
+    el.syncStatus.textContent = playlist.lastError ? `Last refresh failed: ${playlist.lastError}` : `${synced} · ${playlist.autoSync ? 'checks roughly every 6 hours' : 'auto-sync off'}`;
+  }
+  selectedVideo = currentVideo ? r.videos.find((v) => v.youtubeId === currentVideo.videoId) || null : null;
+  el.save.hidden = !currentVideo;
+  el.save.disabled = !currentVideo || !!selectedVideo;
+  el.save.textContent = selectedVideo ? 'Already in this series' : 'Save video to series';
+  el.queuedActions.hidden = !selectedVideo;
+  el.videoStatus.hidden = !selectedVideo;
+  if (selectedVideo) {
+    el.videoStatus.textContent = selectedVideo.status === 'done' ? 'This video is marked watched.' :
+      `In this series${selectedVideo.resumeSeconds ? ` · saved at ${fmtClock(selectedVideo.resumeSeconds)}` : ''}.`;
+    el.savePosition.hidden = selectedVideo.status === 'done';
+    el.markWatched.textContent = selectedVideo.status === 'done' ? 'Mark unwatched' : 'Mark watched';
+  }
+}
+
+el.series.addEventListener('change', chooseSeries);
+el.newToggle.addEventListener('click', () => { el.newrow.hidden = !el.newrow.hidden; if (!el.newrow.hidden) el.newname.focus(); });
 el.create.addEventListener('click', async () => {
-  const name = (el.newname.value || '').trim();
-  if (!name) { setMsg('Type a name first.', 'warn'); return; }
+  const title = el.newname.value.trim();
+  if (!title) { message(el.msg, 'Enter a series name.', 'warn'); return; }
   el.create.disabled = true;
-  const r = await send({ type: 'createSeries', title: name });
+  const r = await send({ type: 'createSeries', title });
   el.create.disabled = false;
-  if (!r || !r.ok) { setMsg('Could not create: ' + (r && r.error ? r.error : 'unknown'), 'err'); return; }
-  el.newname.value = '';
+  if (!r.ok) { message(el.msg, r.error || 'Could not create series.', 'err'); return; }
+  el.newname.value = ''; el.newrow.hidden = true;
   state.lastSeriesId = r.id;
   await send({ type: 'setConfig', patch: { lastSeriesId: r.id } });
-  setMsg('Series created.', 'ok');
-  await renderSeries();
-  el.series.value = r.id;
+  await renderSeries(r.id);
+  message(el.msg, 'Series created.', 'ok');
 });
 
-function renderPillToggle() {
-  const on = !state.settings || state.settings.showPill !== false;
-  el.togglePill.textContent = on ? 'Hide pill' : 'Show pill';
-}
+el.save.addEventListener('click', async () => {
+  if (!currentVideo || !el.series.value) return;
+  const id = el.series.value;
+  el.save.disabled = true; message(el.msg, 'Saving…');
+  const r = await send({ type: 'save', seriesId: id, url: currentVideo.url, durationSeconds: currentVideo.durationSeconds, resumeSeconds: currentVideo.currentTime });
+  if (!r.ok) { el.save.disabled = false; message(el.msg, r.duplicate ? `Already in “${r.seriesTitle || 'this series'}”.` : r.error || 'Could not save.', r.duplicate ? 'warn' : 'err'); return; }
+  state.lastSeriesId = id;
+  await renderSeries(id);
+  message(el.msg, r.warning || `Saved to “${r.seriesTitle || 'your queue'}”.`, r.warning ? 'warn' : 'ok');
+});
 
+el.savePosition.addEventListener('click', async () => {
+  if (!selectedVideo || !currentVideo || selectedVideo.status === 'done') return;
+  const context = await activeContext();
+  if (!context.video || context.video.videoId !== currentVideo.videoId) { message(el.msg, 'The active video changed. Refresh the popup.', 'warn'); return; }
+  currentVideo = context.video;
+  if (!(currentVideo.currentTime > 0)) { message(el.msg, 'Play the video first to save a position.', 'warn'); return; }
+  el.savePosition.disabled = true;
+  const r = await send({ type: 'patchVideo', videoId: selectedVideo.id, status: 'watching', resumeSeconds: currentVideo.currentTime, durationSeconds: selectedVideo.durationSeconds ? undefined : currentVideo.durationSeconds });
+  el.savePosition.disabled = false;
+  if (!r.ok) { message(el.msg, r.error || 'Could not save position.', 'err'); return; }
+  await loadSelectedSeries();
+  message(el.msg, `Position saved at ${fmtClock(currentVideo.currentTime)}.`, 'ok');
+});
+
+el.markWatched.addEventListener('click', async () => {
+  if (!selectedVideo) return;
+  const toDone = selectedVideo.status !== 'done';
+  el.markWatched.disabled = true;
+  const r = await send({ type: 'patchVideo', videoId: selectedVideo.id, status: toDone ? 'done' : 'todo', resumeSeconds: 0 });
+  el.markWatched.disabled = false;
+  if (!r.ok) { message(el.msg, r.error || 'Could not update video.', 'err'); return; }
+  await renderSeries(el.series.value);
+  message(el.msg, toDone ? 'Marked watched.' : 'Marked unwatched.', 'ok');
+});
+
+el.importPlaylist.addEventListener('click', async () => {
+  if (!currentPlaylist) return;
+  el.importPlaylist.disabled = true; message(el.playlistMsg, 'Importing the full playlist…');
+  const r = await send({ type: 'importPlaylist', url: currentPlaylist, title: el.playlistTitle.value, autoSync: el.importAutoSync.checked });
+  el.importPlaylist.disabled = false;
+  if (!r.ok) { message(el.playlistMsg, r.error || 'Could not import playlist.', 'err'); return; }
+  state.lastSeriesId = r.id;
+  await renderSeries(r.id);
+  message(el.playlistMsg, `Imported ${r.added || 0} videos${r.unavailable ? ` · ${r.unavailable} unavailable` : ''}${r.duplicates ? ` · ${r.duplicates} duplicates skipped` : ''}.`, 'ok');
+});
+
+async function refreshLinked(restoreRemoved) {
+  if (!selectedSeries?.playlist) return;
+  if (restoreRemoved && !confirm('Re-add removed videos still in this playlist as unwatched?')) return;
+  const id = selectedSeries.id;
+  el.refreshPlaylist.disabled = true; el.restorePlaylist.disabled = true;
+  message(el.msg, restoreRemoved ? 'Restoring…' : 'Refreshing playlist…');
+  const r = await send({ type: 'refreshPlaylist', seriesId: id, restoreRemoved });
+  el.refreshPlaylist.disabled = false; el.restorePlaylist.disabled = false;
+  if (el.series.value === id) await renderSeries(id);
+  if (!r.ok) { message(el.msg, r.error || 'Could not refresh playlist.', 'err'); return; }
+  message(el.msg, `${r.added || 0} videos added${r.unavailable ? ` · ${r.unavailable} unavailable` : ''}.`, 'ok');
+}
+el.refreshPlaylist.addEventListener('click', () => refreshLinked(false));
+el.restorePlaylist.addEventListener('click', () => refreshLinked(true));
+el.autoSync.addEventListener('change', async () => {
+  if (!selectedSeries?.playlist) return;
+  const id = selectedSeries.id, enabled = el.autoSync.checked;
+  el.autoSync.disabled = true;
+  const r = await send({ type: 'setAutoSync', seriesId: id, enabled });
+  el.autoSync.disabled = false;
+  if (!r.ok) { if (el.series.value === id) el.autoSync.checked = !enabled; message(el.msg, r.error || 'Could not update auto-sync.', 'err'); return; }
+  if (el.series.value === id) await loadSelectedSeries();
+  message(el.msg, enabled ? 'Automatic checks enabled.' : 'Automatic checks paused.', 'ok');
+});
+el.openSeries.addEventListener('click', () => { if (el.series.value) chrome.tabs.create({ url: SITE_URL + '#/s/' + encodeURIComponent(el.series.value) }); });
+
+function renderPillToggle() { el.togglePill.textContent = state.settings?.showPill === false ? 'Show pill' : 'Hide pill'; }
 el.togglePill.addEventListener('click', async () => {
-  const on = !state.settings || state.settings.showPill !== false;
-  const next = !on;
+  const next = state.settings?.showPill === false;
   await send({ type: 'setConfig', patch: { settings: { showPill: next } } });
   state.settings = { ...(state.settings || {}), showPill: next };
-  renderPillToggle();
-  el.lastSaved.textContent = next ? 'Pill shown' : 'Pill hidden';
+  renderPillToggle(); el.lastSaved.textContent = next ? 'Pill shown' : 'Pill hidden';
 });
-
 el.resetPill.addEventListener('click', async () => {
   await chrome.storage.local.remove(['pillPos', 'pillHidden', 'panelPos']);
   await send({ type: 'setConfig', patch: { settings: { showPill: true } } });
   state.settings = { ...(state.settings || {}), showPill: true };
-  renderPillToggle();
-  el.lastSaved.textContent = 'Pill reset';
+  renderPillToggle(); el.lastSaved.textContent = 'Pill reset';
 });
-
-el.refresh.addEventListener('click', async () => { await boot(false); });
+el.refresh.addEventListener('click', () => boot(false));
 el.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
 el.openSettings.addEventListener('click', () => chrome.runtime.openOptionsPage());
 el.openSite.addEventListener('click', () => chrome.tabs.create({ url: SITE_URL }));
 el.openQueue.addEventListener('click', (e) => { e.preventDefault(); chrome.tabs.create({ url: SITE_URL }); });
 
-// ------------------------------------------------------------------ boot
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || (!changes.token && !changes.apiBaseUrl)) return;
+  if (changes.token) state.hasToken = !!changes.token.newValue;
+  if (changes.apiBaseUrl) state.apiBaseUrl = changes.apiBaseUrl.newValue || '';
+  renderStatus();
+  renderSeries();
+});
 
 async function boot(first) {
   const st = await send({ type: 'state' });
-  if (st && st.ok) state = { ...state, ...st };
-  renderStatus();
-  renderPillToggle();
-
-  // A link queued from the right-click menu while no series was set.
+  if (st.ok) state = { ...state, ...st };
+  renderStatus(); renderPillToggle();
+  const context = await activeContext();
+  currentVideo = context.video; currentPlaylist = context.playlist;
   if (first) {
     const { pendingSave } = await chrome.storage.local.get('pendingSave');
     if (pendingSave) {
       await chrome.storage.local.remove('pendingSave');
-      currentVideo = { videoId: (pendingSave.match(/[?&]v=([A-Za-z0-9_-]{11})/) || [])[1] || 'link', url: pendingSave, title: 'Link from the page', channel: '', durationSeconds: 0, currentTime: 0, thumbnail: '' };
+      const id = YTQShared.videoIdFrom(pendingSave);
+      if (id) currentVideo = { videoId: id, url: pendingSave, title: 'Link from the page', channel: '', durationSeconds: 0, currentTime: 0, thumbnail: '' };
     }
   }
-  if (!currentVideo) currentVideo = await activeVideo();
-  renderVideo();
+  renderContext();
   await renderSeries();
 }
-
 boot(true);

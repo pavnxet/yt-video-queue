@@ -101,6 +101,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
   }
 
+  if (seg[0] === 'videos' && seg[1] === 'lookup' && seg.length === 2 && method === 'GET') {
+    return data.lookupYouTubeVideo(env, user, url.searchParams.get('youtubeId') || '');
+  }
+
   if (seg[0] === 'videos' && seg.length === 2) {
     const id = seg[1];
     if (method === 'PATCH') return data.patchVideo(request, env, user, id);
