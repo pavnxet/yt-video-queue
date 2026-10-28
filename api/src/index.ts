@@ -7,6 +7,28 @@ import { YouTubeError } from './youtube';
 import * as auth from './auth';
 import * as data from './data';
 
+// The browser aborts its own request after 12s. Answering before that with a
+// real error beats being killed at the edge, which only logs `canceled`.
+const REQUEST_DEADLINE_MS = 10_000;
+
+class RequestTimeout extends Error {}
+
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new RequestTimeout(`no response after ${ms}ms`)), ms);
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const cors = corsHeaders(request, env);
@@ -16,10 +38,19 @@ export default {
 
     let res: Response;
     try {
-      res = await route(request, env);
+      res = await withDeadline(route(request, env), REQUEST_DEADLINE_MS);
     } catch (e) {
-      console.error(e);
-      res = json({ error: 'Internal server error', detail: errorMessage(e) }, 500);
+      if (e instanceof RequestTimeout) {
+        console.error('Deadline exceeded:', request.method, new URL(request.url).pathname);
+        res = json(
+          { error: 'The API took too long to answer. Please try again.', retry: true },
+          504,
+          { 'Retry-After': '2' },
+        );
+      } else {
+        console.error(e);
+        res = json({ error: 'Internal server error', detail: errorMessage(e) }, 500);
+      }
     }
 
     const headers = new Headers(res.headers);

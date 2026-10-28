@@ -24,9 +24,17 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 // ---- config helpers -------------------------------------------------------
 
 async function getConfig(env: Env, key: string): Promise<string | null> {
-  const res = await db(env).execute({ sql: 'SELECT value FROM app_config WHERE key = ?', args: [key] });
-  const row = res.rows[0];
-  return row ? String(row.value) : null;
+  try {
+    const res = await db(env).execute({ sql: 'SELECT value FROM app_config WHERE key = ?', args: [key] });
+    const row = res.rows[0];
+    return row ? String(row.value) : null;
+  } catch (e) {
+    // A database whose first migration has not landed yet must read as "not
+    // configured" — that gives the login screen its "register first" message
+    // instead of a 500.
+    if (/no such table/i.test(errorMessage(e))) return null;
+    throw e;
+  }
 }
 
 async function setConfig(env: Env, key: string, value: string): Promise<void> {
